@@ -2,6 +2,8 @@ use BlockDist, CyclicDist, BlockCycDist, ReplicatedDist;
 use String;
 use Regexp;
 
+require "word2vec.h";
+
 config const textFile = "data.txt";
 
 config const MAX_STRING = 100;
@@ -14,18 +16,20 @@ config const debug_mode = true;
 config const vocab_hash_size = 30000000;  // Maximum 30 * 0.7 = 21M words in the vocabulary
 config const initial_vocab_max_size = 1000;
 
-const SPACE = ascii(' ');
-const TAB = ascii('\t');
-const CRLF = ascii('\n');
+config const min_count = 5;
+
+const SPACE = ascii(' '): uint(8);
+const TAB = ascii('\t'): uint(8);
+const CRLF = ascii('\n'): uint(8);
 
 var wordDomain = {0..#MAX_STRING};
 
 class vocab_word {
+  var len: int;
+  var word: [0..#len] uint(8);
   var cn: int(64);
   /*var point: [MAX_CODE_LENGTH] int;
   var code: [MAX_CODE_LENGTH] int;*/
-  var len: int;
-  var word: [wordDomain] uint(8);
   /*var codelen: int;*/
 };
 
@@ -35,7 +39,7 @@ var vocabDomain = {0..#vocab_max_size};
 var vocab: [vocabDomain] vocab_word;
 var vocab_hash: [0..#vocab_hash_size] int = -1;
 
-var train_words: uint(64) = 0;
+var train_words: int = 0;
 
 /*void InitUnigramTable() {
   int a, i;
@@ -55,34 +59,36 @@ var train_words: uint(64) = 0;
   }
 }*/
 
+var atCRLF = false;
+
+inline proc readNextChar(ref ch: uint(8), reader): bool {
+  if (atCRLF) {
+    atCRLF = false;
+    ch = CRLF;
+    return true;
+  } else {
+    return reader.read(ch);
+  }
+}
+
 proc ReadWord(word: [?] uint(8), reader): int {
   var a: int = 0;
   var ch: uint(8);
 
-  /*word = 0;*/
-
-  while reader.read(ch) {
-    if (ch == 13) {
-      continue;
-    }
+  while readNextChar(ch, reader) {
+    if (ch == 13) then continue;
     if ((ch == SPACE) || (ch == TAB) || (ch == CRLF)) {
       if (a > 0) {
         // TODO: write reader with ungetc
-        /*if (ch == '\n') ungetc(ch, fin);*/
+        if (ch == CRLF) then atCRLF = true; //ungetc(ch, fin);
         break;
       }
-      if (ch == CRLF) {
-        WriteSpaceWord(word);
-        return 4;
-      } else {
-        continue;
-      }
+      if (ch == CRLF) then return WriteSpaceWord(word);
+                      else continue;
     }
     word[a] = ch;
     a += 1;
-    if (a >= MAX_STRING - 1) {
-      a -= 1;   // Truncate too long words
-    }
+    if (a >= MAX_STRING - 1) then a -= 1; // Truncate too long words
   }
   word[a] = 0;
   return a;
@@ -101,17 +107,12 @@ inline proc GetWordHash(word: [?] uint(8), len: int): int {
 proc SearchVocab(word: [?D] uint(8), len: int): int {
   var hash = GetWordHash(word, len);
 
-  /*var idx = -1;*/
   while (1) {
-    if (vocab_hash[hash] == -1) {
-      return -1;
-    }
+    if (vocab_hash[hash] == -1) then return -1;
     var vw = vocab[vocab_hash[hash]];
     if (len == vw.len && word[0..#len].equals(vw.word[0..#len])) {
-      /*writeln("eq word: ", word, " vw.word ", vw.word);*/
       return vocab_hash[hash];
     }
-    /*writeln("word: ", word, " vw.word ", vw.word);*/
     hash = (hash + 1) % vocab_hash_size;
   }
 
@@ -126,7 +127,7 @@ proc ReadWordIndex(): int {
 proc AddWordToVocab(word: [?D] uint(8), len: int): int {
   var v = vocab[vocab_size];
   if (v == nil) {
-    v = new vocab_word();
+    v = new vocab_word(len);
     vocab[vocab_size] = v;
   }
   v.len = len;
@@ -136,10 +137,12 @@ proc AddWordToVocab(word: [?D] uint(8), len: int): int {
   vocab_size += 1;
 
   // Reallocate memory if needed
-  /*if (vocab_size + 2 >= vocab_max_size) {
+  if (vocab_size + 2 >= vocab_max_size) {
     vocab_max_size *= 2;
     vocabDomain = {0..#vocab_max_size};
-  }*/
+    writeln("new vocab_max_size ", vocab_max_size);
+    stdout.flush();
+  }
 
   var hash = GetWordHash(word, len);
   while (vocab_hash[hash] != -1) {
@@ -149,8 +152,131 @@ proc AddWordToVocab(word: [?D] uint(8), len: int): int {
   return vocab_size - 1;
 }
 
-proc SortVocab() {
+private inline proc vocabCount(vocab): int {
+  return if vocab == nil then 0 else vocab.cn;
+}
 
+private inline proc chpl_sort_cmp(a, b, param reverse=false, param eq=false) {
+  if eq {
+    if reverse then return vocabCount(a) >= vocabCount(b);
+    else return vocabCount(a) <= vocabCount(b);
+  } else {
+    if reverse then return vocabCount(a) > vocabCount(b);
+    else return vocabCount(a) < vocabCount(b);
+  }
+}
+
+proc XInsertionSort(Data: [?Dom] vocab_word, doublecheck=false, param reverse=false) where Dom.rank == 1 {
+  const lo = Dom.low;
+  for i in Dom {
+    const ithVal = Data(i);
+    var inserted = false;
+    for j in lo..i-1 by -1 {
+      if (chpl_sort_cmp(ithVal, Data(j), reverse)) {
+        Data(j+1) = Data(j);
+      } else {
+        Data(j+1) = ithVal;
+        inserted = true;
+        break;
+      }
+    }
+    if (!inserted) {
+      Data(lo) = ithVal;
+    }
+  }
+
+  /*if (doublecheck) then VerifySort(Data, "InsertionSort", reverse);*/
+}
+
+proc QuickSort(Data: [?Dom] vocab_word, minlen=16, doublecheck=false, param reverse=false) where Dom.rank == 1 {
+  // grab obvious indices
+  const lo = Dom.low,
+        hi = Dom.high,
+        mid = lo + (hi-lo+1)/2;
+
+  /*writeln();
+  writeln(Dom);
+  writeln(lo, " ", Data(lo));
+  writeln(hi, " ", Data(hi));
+  writeln(mid, " ", Data(mid));*/
+
+  // base case -- use insertion sort
+  if (hi - lo < minlen) {
+    /*writeln("insertion sort");*/
+    XInsertionSort(Data, reverse=reverse);
+    return;
+  }
+
+  // find pivot using median-of-3 method
+  if (chpl_sort_cmp(Data(mid), Data(lo), reverse)) then Data(mid) <=> Data(lo);
+  if (chpl_sort_cmp(Data(hi), Data(lo), reverse)) then Data(hi) <=> Data(lo);
+  if (chpl_sort_cmp(Data(hi), Data(mid), reverse)) then Data(hi) <=> Data(mid);
+  const pivotVal = Data(mid);
+  Data(mid) = Data(hi-1);
+  Data(hi-1) = pivotVal;
+  // end median-of-3 partitioning
+
+  var loptr = lo,
+      hiptr = hi-1;
+  while (loptr < hiptr) {
+    do { loptr += 1; } while (chpl_sort_cmp(Data(loptr), pivotVal, reverse));
+    do { hiptr -= 1; } while (chpl_sort_cmp(pivotVal, Data(hiptr), reverse));
+    if (loptr < hiptr) {
+      Data(loptr) <=> Data(hiptr);
+    }
+  }
+
+  Data(hi-1) = Data(loptr);
+  Data(loptr) = pivotVal;
+
+  //  cobegin {
+    QuickSort(Data[..loptr-1], reverse=reverse);  // could use unbounded ranges here
+    QuickSort(Data[loptr+1..], reverse=reverse);
+    //  }
+
+  /*if (doublecheck) then VerifySort(Data, "QuickSort", reverse);*/
+}
+
+proc SortVocab() {
+  var a: int;
+  var size: int;
+  var hash: int;
+
+  // Sort the vocabulary and keep </s> at the first position
+  QuickSort(vocab[1..], vocab_size - 1, reverse=true);
+
+  vocab_hash = -1;
+
+  size = vocab_size;
+  train_words = 0;
+
+  for (a) in 0..#size {
+    if (vocab[a] == nil) then continue;
+
+    // Words occuring less than min_count times will be discarded from the vocab
+    if ((vocab[a].cn < min_count) && (a != 0)) {
+      vocab_size -= 1;
+      vocab[a] = nil;
+      /*free(vocab[a].word);*/
+    } else {
+      // Hash will be re-computed, as after the sorting it is not actual
+      hash = GetWordHash(vocab[a].word, vocab[a].len);
+      while (vocab_hash[hash] != -1) {
+        hash = (hash + 1) % vocab_hash_size;
+      }
+      vocab_hash[hash] = a;
+      train_words += vocab[a].cn;
+    }
+  }
+
+  /*vocab = (struct vocab_word *)realloc(vocab, (vocab_size + 1) * sizeof(struct vocab_word));*/
+  vocabDomain = {0..#vocab_size + 1};
+
+  // Allocate memory for the binary tree construction
+  /*for (a = 0; a < vocab_size; a++) {
+    vocab[a].code = (char *)calloc(MAX_CODE_LENGTH, sizeof(char));
+    vocab[a].point = (int *)calloc(MAX_CODE_LENGTH, sizeof(int));
+  }*/
 }
 
 proc ReduceVocab() {
@@ -177,14 +303,15 @@ proc LearnVocabFromTrainFile() {
 
   vocab_size = 0;
 
+  writeln("reading...");
+  stdout.flush();
+
   WriteSpaceWord(word);
   AddWordToVocab(word, 4);
 
   while (1) {
     len = ReadWord(word, r);
-    if (len == 0) {
-      break;
-    }
+    if (len == 0) then break;
 
     train_words += 1;
 
@@ -205,11 +332,19 @@ proc LearnVocabFromTrainFile() {
     }*/
   }
 
+  writeln("sorting...");
+  if (debug_mode > 0) {
+    writeln("Vocab size: ", vocab_size);
+    writeln("Words in train file: ", train_words);
+  }
+  stdout.flush();
+
   SortVocab();
 
   if (debug_mode > 0) {
     writeln("Vocab size: ", vocab_size);
     writeln("Words in train file: ", train_words);
+    stdout.flush();
   }
 
   /*file_size = ftell(fin);*/
@@ -234,12 +369,13 @@ proc TrainModel() {
 
 // Utilities
 
-inline proc WriteSpaceWord(word) {
+inline proc WriteSpaceWord(word): int {
   word[0] = ascii('<');
   word[1] = ascii('/');
   word[2] = ascii('s');
   word[3] = ascii('>');
   word[4] = 0;
+  return 4;
 }
 
 //
