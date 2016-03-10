@@ -17,6 +17,7 @@ config const vocab_hash_size = 30000000;  // Maximum 30 * 0.7 = 21M words in the
 config const initial_vocab_max_size = 1000;
 
 config const min_count = 5;
+config const save_vocab_file = "vocab.txt";
 
 const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
@@ -432,10 +433,15 @@ proc LearnVocabFromTrainFile() {
 }
 
 proc SaveVocab() {
-  /*long long i;
-  FILE *fo = fopen(save_vocab_file, "wb");
-  for (i = 0; i < vocab_size; i++) fprintf(fo, "%s %lld\n", vocab[i].word, vocab[i].cn);
-  fclose(fo);*/
+  var f = open(save_vocab_file, iomode.cw);
+  var w = f.writer();
+  for (i) in 0..#vocab_size {
+    var vw = vocab[i].word;
+    [j in 0..#vw.len] w.writef("%c", vw.word[j]);
+    w.writeln(" ", vocab[i].cn);
+  }
+  w.close();
+  f.close();
 }
 
 proc ReadVocab() {
@@ -700,6 +706,7 @@ var t: Timer;
 t.start();
 
 LearnVocabFromTrainFile();
+SaveVocab();
 
 t.stop();
 timing("LearnVocabFromTrainFile in ",t.elapsed(TimeUnits.microseconds), " microseconds");
