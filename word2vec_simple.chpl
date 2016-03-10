@@ -22,21 +22,14 @@ const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
 const CRLF = ascii('\n'): uint(8);
 
-var wordDomain = {0..#MAX_STRING};
-
 class VocabWord {
   var len: int = MAX_STRING;
   var word: [0..#len] uint(8);
 }
 
 record VocabEntry {
-  /*var len: int;*/
-  /*var word: [0..#MAX_STRING] uint(8);*/
   var word: VocabWord = nil;
   var cn: int(64);
-  /*var point: [MAX_CODE_LENGTH] int;
-  var code: [MAX_CODE_LENGTH] int;*/
-  /*var codelen: int;*/
 };
 
 var vocab_size = 0;
@@ -146,15 +139,13 @@ proc ReadWordIndex(): int {
 
 // Adds a word to the vocabulary
 proc AddWordToVocab(word: [?D] uint(8), len: int): int {
-  /*var v = vocab[vocab_size];
-  if (v == nil) {
-    v = new VocabEntry(len);
-    vocab[vocab_size] = v;
-  }*/
   var vw = new VocabWord(len);
-  vw.word = word[0..#len];
+  /*vw.word = word[0..#len];*/
+  for (i) in 0..#len {
+    vw.word[i] = word[i];
+  }
   vocab[vocab_size].word = vw;
-  /*vocab[vocab_size].cn = 0;*/
+  vocab[vocab_size].cn = 0;
 
   vocab_size += 1;
 
@@ -162,8 +153,6 @@ proc AddWordToVocab(word: [?D] uint(8), len: int): int {
   if (vocab_size + 2 >= vocab_max_size) {
     vocab_max_size *= 2;
     vocabDomain = {0..#vocab_max_size};
-    /*writeln("new vocab_max_size ", vocab_max_size);*/
-    /*stdout.flush();*/
   }
 
   var hash = GetWordHash(word, len);
@@ -173,10 +162,6 @@ proc AddWordToVocab(word: [?D] uint(8), len: int): int {
   vocab_hash[hash] = vocab_size - 1;
   return vocab_size - 1;
 }
-
-/*private inline proc vocabCount(vocab): int {
-  return if vocab == nil then 0 else vocab.cn;
-}*/
 
 private inline proc chpl_sort_cmp(a, b, param reverse=false, param eq=false) {
   if eq {
@@ -216,15 +201,8 @@ proc QuickSort(Data: [?Dom] VocabEntry, minlen=16, doublecheck=false, param reve
         hi = Dom.high,
         mid = lo + (hi-lo+1)/2;
 
-  /*writeln();
-  writeln(Dom);
-  writeln(lo, " ", Data(lo));
-  writeln(hi, " ", Data(hi));
-  writeln(mid, " ", Data(mid));*/
-
   // base case -- use insertion sort
   if (hi - lo < minlen) {
-    /*writeln("insertion sort");*/
     XInsertionSort(Data, reverse=reverse);
     return;
   }
@@ -273,8 +251,6 @@ proc SortVocab() {
   train_words = 0;
 
   for (a) in 0..#size {
-    /*if (vocab[a] == nil) then continue;*/
-
     // Words occuring less than min_count times will be discarded from the vocab
     if ((vocab[a].cn < min_count) && (a != 0)) {
       vocab_size -= 1;
@@ -388,7 +364,7 @@ proc CreateBinaryTree() {
 }
 
 proc LearnVocabFromTrainFile() {
-  var word: [wordDomain] uint(8);
+  var word: [0..#MAX_STRING] uint(8);
   var i: int(64);
   var len: int;
 
