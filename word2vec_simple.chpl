@@ -18,6 +18,7 @@ config const initial_vocab_max_size = 1000;
 
 config const min_count = 5;
 config const save_vocab_file = "vocab.txt";
+config const read_vocab_file = save_vocab_file;
 
 const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
@@ -437,44 +438,73 @@ proc SaveVocab() {
   var w = f.writer();
   for (i) in 0..#vocab_size {
     var vw = vocab[i].word;
-    [j in 0..#vw.len] w.writef("%c", vw.word[j]);
+    /* parallelizes output! [j in 0..#vw.len] w.writef("%c", vw.word[j]);*/
+    for (j) in 0..#vw.len {
+      w.writef("%c", vw.word[j]);
+    }
     w.writeln(" ", vocab[i].cn);
   }
   w.close();
   f.close();
 }
 
+inline proc wordToInt(word: [?] uint(8), len: int): int {
+  var cn = 0;
+  var x = 1;
+  for (i) in 0..#len by -1 {
+    cn += x * (word[i] - 48);
+    x *= 10;
+  }
+  return cn;
+}
+
 proc ReadVocab() {
-  /*long long a, i = 0;
-  char c;
-  char word[MAX_STRING];
-  FILE *fin = fopen(read_vocab_file, "rb");
-  if (fin == NULL) {
+  var a: int(64);
+  var cn: int;
+  var c: uint(8);
+  var len: int;
+  var word: [0..#MAX_STRING] uint(8);
+
+  var f = open(read_vocab_file, iomode.r);
+  /*if (fin == NULL) {
     printf("Vocabulary file not found\n");
     exit(1);
-  }
-  for (a = 0; a < vocab_hash_size; a++) vocab_hash[a] = -1;
+  }*/
+  var r = f.reader(kind=ionative);
+
+  vocab_hash = -1;
   vocab_size = 0;
   while (1) {
-    ReadWord(word, fin);
-    if (feof(fin)) break;
-    a = AddWordToVocab(word);
-    fscanf(fin, "%lld%c", &vocab[a].cn, &c);
-    i++;
+    len = ReadWord(word, r);
+    if (len == 0) then break;
+    a = AddWordToVocab(word, len);
+
+    // read and compute word count
+    len = ReadWord(word, r);
+    if (len == 0) then break;
+    vocab[a].cn = wordToInt(word, len);
+
+    // skip CRLF
+    ReadWord(word, r);
   }
+
+  r.close();
+  f.close();
+
   SortVocab();
-  if (debug_mode > 0) {
-    printf("Vocab size: %lld\n", vocab_size);
-    printf("Words in train file: %lld\n", train_words);
+  if (log_level > 0) {
+    writeln("Vocab size: ", vocab_size);
+    writeln("Words in train file: ", train_words);
   }
-  fin = fopen(train_file, "rb");
+
+  /*fin = fopen(train_file, "rb");
   if (fin == NULL) {
     printf("ERROR: training data file not found!\n");
     exit(1);
   }
   fseek(fin, 0, SEEK_END);
-  file_size = ftell(fin);
-  fclose(fin);*/
+  file_size = ftell(fin);*/
+  /*fclose(fin);*/
 }
 
 proc InitNet() {
@@ -705,8 +735,10 @@ inline proc timing(args ...?k) {
 var t: Timer;
 t.start();
 
-LearnVocabFromTrainFile();
-SaveVocab();
+/*LearnVocabFromTrainFile();
+SaveVocab();*/
+
+ReadVocab();
 
 t.stop();
 timing("LearnVocabFromTrainFile in ",t.elapsed(TimeUnits.microseconds), " microseconds");
