@@ -30,10 +30,18 @@ class VocabWord {
   var word: [0..#len] uint(8);
 }
 
+class VocabTreeNode {
+  var codelen: uint(8);
+  var code: [0..#MAX_CODE_LENGTH] uint(8);
+  var point: [0..#MAX_CODE_LENGTH] int;
+}
+
 record VocabEntry {
   var word: VocabWord = nil;
   var cn: int(64);
+  var node: VocabTreeNode;
 };
+
 
 var vocab_size = 0;
 var vocab_max_size = initial_vocab_max_size;
@@ -296,10 +304,9 @@ proc SortVocab() {
   vocabDomain = {0..#vocab_size + 1};
 
   // Allocate memory for the binary tree construction
-  /*for (a = 0; a < vocab_size; a++) {
-    vocab[a].code = (char *)calloc(MAX_CODE_LENGTH, sizeof(char));
-    vocab[a].point = (int *)calloc(MAX_CODE_LENGTH, sizeof(int));
-  }*/
+  for (a) in 0..#vocab_size {
+    vocab[a].node = new VocabTreeNode();
+  }
 }
 
 proc ReduceVocab() {
@@ -323,41 +330,53 @@ proc ReduceVocab() {
 }
 
 proc CreateBinaryTree() {
-  /*long long a, b, i, min1i, min2i, pos1, pos2, point[MAX_CODE_LENGTH];
-  char code[MAX_CODE_LENGTH];
-  long long *count = (long long *)calloc(vocab_size * 2 + 1, sizeof(long long));
-  long long *binary = (long long *)calloc(vocab_size * 2 + 1, sizeof(long long));
-  long long *parent_node = (long long *)calloc(vocab_size * 2 + 1, sizeof(long long));
-  for (a = 0; a < vocab_size; a++) count[a] = vocab[a].cn;
-  for (a = vocab_size; a < vocab_size * 2; a++) count[a] = 1e15;
+  var b: int(64);
+  var i: int(64);
+  var min1i: int(64);
+  var min2i: int(64);
+  var pos1: int(64);
+  var pos2: int(64);
+  var point: [0..#MAX_CODE_LENGTH] int(64);
+  var code: [0..#MAX_CODE_LENGTH] uint(8);
+  var dom = {0..#(vocab_size*2 + 1)};
+  var count: [dom] int(64);
+  var binary: [dom] int(64);
+  var parent_node: [dom] int(64);
+
+  count = 1e15: int(64);
+  for (a) in 0..#vocab_size {
+    count[a] = vocab[a].cn;
+  }
+
   pos1 = vocab_size - 1;
   pos2 = vocab_size;
+
   // Following algorithm constructs the Huffman tree by adding one node at a time
-  for (a = 0; a < vocab_size - 1; a++) {
+  for (a) in 0..#(vocab_size-1) {
     // First, find two smallest nodes 'min1, min2'
     if (pos1 >= 0) {
       if (count[pos1] < count[pos2]) {
         min1i = pos1;
-        pos1--;
+        pos1 -= 1;
       } else {
         min1i = pos2;
-        pos2++;
+        pos2 += 1;
       }
     } else {
       min1i = pos2;
-      pos2++;
+      pos2 += 1;
     }
     if (pos1 >= 0) {
       if (count[pos1] < count[pos2]) {
         min2i = pos1;
-        pos1--;
+        pos1 -= 1;
       } else {
         min2i = pos2;
-        pos2++;
+        pos2 += 1;
       }
     } else {
       min2i = pos2;
-      pos2++;
+      pos2 += 1;
     }
     count[vocab_size + a] = count[min1i] + count[min2i];
     parent_node[min1i] = vocab_size + a;
@@ -365,26 +384,23 @@ proc CreateBinaryTree() {
     binary[min2i] = 1;
   }
   // Now assign binary code to each vocabulary word
-  for (a = 0; a < vocab_size; a++) {
+  for (a) in 0..#vocab_size {
     b = a;
     i = 0;
     while (1) {
-      code[i] = binary[b];
+      code[i] = binary[b]: uint(8);
       point[i] = b;
-      i++;
+      i += 1;
       b = parent_node[b];
-      if (b == vocab_size * 2 - 2) break;
+      if (b == vocab_size * 2 - 2) then break;
     }
-    vocab[a].codelen = i;
-    vocab[a].point[0] = vocab_size - 2;
-    for (b = 0; b < i; b++) {
-      vocab[a].code[i - b - 1] = code[b];
-      vocab[a].point[i - b] = point[b] - vocab_size;
+    vocab[a].node.codelen = i: uint(8);
+    vocab[a].node.point[0] = vocab_size - 2;
+    for (b) in 0..#1 {
+      vocab[a].node.code[i - b - 1] = code[b];
+      vocab[a].node.point[i - b] = point[b] - vocab_size;
     }
   }
-  free(count);
-  free(binary);
-  free(parent_node);*/
 }
 
 proc LearnVocabFromTrainFile() {
