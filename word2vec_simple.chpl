@@ -1,9 +1,7 @@
-use BlockDist, CyclicDist, BlockCycDist, ReplicatedDist, Time;
+use BlockDist, CyclicDist, BlockCycDist, ReplicatedDist, Time, Logging;
 /*use String;*/
 
 /*require "word2vec.h";*/
-
-config const textFile = "data.txt";
 
 config const MAX_STRING = 100;
 config const EXP_TABLE_SIZE = 1000;
@@ -17,8 +15,12 @@ config const vocab_hash_size = 30000000;  // Maximum 30 * 0.7 = 21M words in the
 config const initial_vocab_max_size = 1000;
 
 config const min_count = 5;
-config const save_vocab_file = "vocab.txt";
-config const read_vocab_file = save_vocab_file;
+config const train_file = "data.txt";
+config const save_vocab_file = "";
+config const read_vocab_file = "";
+config const output_file: string = "";
+config const hs = 0;
+config const negative = 5;
 
 const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
@@ -41,8 +43,15 @@ var vocab: [vocabDomain] VocabEntry;
 var vocab_hash: [0..#vocab_hash_size] int = -1;
 
 var train_words: int = 0;
+var word_count_actual = 0;
+var file_size = 0;
+var classes = 0;
+var alpha = 0.025;
+var starting_alpha = 1e-3;
+var sample = 1e-3;
 
-/*void InitUnigramTable() {
+proc InitUnigramTable() {
+/*
   int a, i;
   double train_words_pow = 0;
   double d1, power = 0.75;
@@ -58,7 +67,8 @@ var train_words: int = 0;
     }
     if (i >= vocab_size) i = vocab_size - 1;
   }
-}*/
+*/
+}
 
 var atCRLF = false;
 
@@ -372,7 +382,7 @@ proc LearnVocabFromTrainFile() {
 
   vocab_hash = -1;
 
-  var f = open(textFile, iomode.r);
+  var f = open(train_file, iomode.r);
   /*if (fin == NULL) {
     printf("ERROR: training data file not found!\n");
     exit(1);
@@ -390,10 +400,10 @@ proc LearnVocabFromTrainFile() {
 
     train_words += 1;
 
-    /*if (debug_mode && (train_words % 100000 == 0)) {*/
-      /*write(train_words / 1000, "\r");
-      stdout.flush();*/
-    /*}*/
+    if (log_level > 0 && (train_words % 100000 == 0)) {
+      write(train_words / 1000, "K\r");
+      stdout.flush();
+    }
 
     i = SearchVocab(word, len);
     if (i == -1) {
@@ -407,24 +417,11 @@ proc LearnVocabFromTrainFile() {
     }*/
   }
 
-  if (log_level > 0) {
-    var t: Timer;
-
-    writeln("sorting...");
-    writeln("Vocab size: ", vocab_size);
-    writeln("Words in train file: ", train_words);
-    stdout.flush();
-
-    t.start();
-    SortVocab();
-    t.stop();
-    timing("SortVocab in ",t.elapsed(TimeUnits.microseconds), " microseconds");
-  }
+  SortVocab();
 
   if (log_level > 0) {
-    writeln("Vocab size: ", vocab_size);
-    writeln("Words in train file: ", train_words);
-    stdout.flush();
+    info("Vocab size: ", vocab_size);
+    info("Words in train file: ", train_words);
   }
 
   /*file_size = ftell(fin);*/
@@ -696,19 +693,19 @@ proc TrainModelThread() {
   pthread_exit(NULL);*/
 }
 
-void TrainModel() {
-  /*long a, b, c, d;
-  FILE *fo;
-  pthread_t *pt = (pthread_t *)malloc(num_threads * sizeof(pthread_t));
-  printf("Starting training using file %s\n", train_file);
+proc TrainModel() {
+  var a, b, c, d: int;
+  var t: Timer;
+
+  info("Starting training using file ", train_file);
   starting_alpha = alpha;
-  if (read_vocab_file[0] != 0) ReadVocab(); else LearnVocabFromTrainFile();
-  if (save_vocab_file[0] != 0) SaveVocab();
-  if (output_file[0] == 0) return;
+  if (read_vocab_file != "") then ReadVocab(); else LearnVocabFromTrainFile();
+  if (save_vocab_file != "") then SaveVocab();
+  if (output_file == "") then return;
   InitNet();
-  if (negative > 0) InitUnigramTable();
-  start = clock();
-  for (a = 0; a < num_threads; a++) pthread_create(&pt[a], NULL, TrainModelThread, (void *)a);
+  if (negative > 0) then InitUnigramTable();
+  /*t.start();*/
+  /*for (a = 0; a < num_threads; a++) pthread_create(&pt[a], NULL, TrainModelThread, (void *)a);
   for (a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);
   fo = fopen(output_file, "wb");
   if (classes == 0) {
@@ -795,13 +792,4 @@ inline proc wordToInt(word: [?] uint(8), len: int): int {
   return cn;
 }
 
-//
-var t: Timer;
-t.start();
-
-LearnVocabFromTrainFile();
-SaveVocab();
-/*ReadVocab();*/
-
-t.stop();
-timing("LearnVocabFromTrainFile in ",t.elapsed(TimeUnits.microseconds), " microseconds");
+TrainModel();
