@@ -1,7 +1,4 @@
-use BlockDist, CyclicDist, BlockCycDist, ReplicatedDist, Time, Logging;
-/*use String;*/
-
-/*require "word2vec.h";*/
+use BlockDist, CyclicDist, BlockCycDist, ReplicatedDist, Time, Logging, Random;
 
 config const MAX_STRING = 100;
 config const EXP_TABLE_SIZE = 1000;
@@ -15,12 +12,14 @@ config const vocab_hash_size = 30000000;  // Maximum 30 * 0.7 = 21M words in the
 config const initial_vocab_max_size = 1000;
 
 config const min_count = 5;
-config const train_file = "data.txt";
+config const train_file = "";
 config const save_vocab_file = "";
 config const read_vocab_file = "";
 config const output_file: string = "";
 config const hs = 0;
 config const negative = 5;
+config const layer1_size = 100;
+config const random_seed = 0;
 
 const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
@@ -41,6 +40,19 @@ var vocab_max_size = initial_vocab_max_size;
 var vocabDomain = {0..#vocab_max_size};
 var vocab: [vocabDomain] VocabEntry;
 var vocab_hash: [0..#vocab_hash_size] int = -1;
+
+var syn0Domain = {0..#vocab_size*layer1_size};
+var syn0: [syn0Domain] real;
+
+var syn1Domain = {0..#1};
+var syn1: [syn1Domain] real;
+
+var syn1negDomain = {0..#1};
+var syn1neg: [syn1negDomain] real;
+
+var randStreamSeeded = new RandomStream(random_seed);
+
+/*var expTable: [0..#networkDomain] real;*/
 
 var train_words: int = 0;
 var word_count_actual = 0;
@@ -488,27 +500,21 @@ proc ReadVocab() {
 }
 
 proc InitNet() {
-  /*long long a, b;
-  unsigned long long next_random = 1;
-  a = posix_memalign((void **)&syn0, 128, (long long)vocab_size * layer1_size * sizeof(real));
-  if (syn0 == NULL) {printf("Memory allocation failed\n"); exit(1);}
+  syn0Domain = {0..#vocab_size*layer1_size};
+
   if (hs) {
-    a = posix_memalign((void **)&syn1, 128, (long long)vocab_size * layer1_size * sizeof(real));
-    if (syn1 == NULL) {printf("Memory allocation failed\n"); exit(1);}
-    for (a = 0; a < vocab_size; a++) for (b = 0; b < layer1_size; b++)
-     syn1[a * layer1_size + b] = 0;
+    syn1Domain = syn0Domain;
+    syn1 = 0;
   }
+
   if (negative>0) {
-    a = posix_memalign((void **)&syn1neg, 128, (long long)vocab_size * layer1_size * sizeof(real));
-    if (syn1neg == NULL) {printf("Memory allocation failed\n"); exit(1);}
-    for (a = 0; a < vocab_size; a++) for (b = 0; b < layer1_size; b++)
-     syn1neg[a * layer1_size + b] = 0;
+    syn1negDomain = syn0Domain;
+    syn1neg = 0;
   }
-  for (a = 0; a < vocab_size; a++) for (b = 0; b < layer1_size; b++) {
-    next_random = next_random * (unsigned long long)25214903917 + 11;
-    syn0[a * layer1_size + b] = (((next_random & 0xFFFF) / (real)65536) - 0.5) / layer1_size;
-  }
-  CreateBinaryTree();*/
+
+  randStreamSeeded.fillRandom(syn0);
+
+  CreateBinaryTree();
 }
 
 proc TrainModelThread() {
