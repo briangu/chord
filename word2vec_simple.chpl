@@ -20,6 +20,10 @@ config const hs = 0;
 config const negative = 5;
 config const layer1_size = 100;
 config const random_seed = 0;
+config const iterations = 5;
+config const window = 5;
+config const cbow = 1;
+config const binary = 0;
 
 const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
@@ -60,7 +64,13 @@ var syn1neg: [syn1negDomain] real;
 
 var randStreamSeeded = new RandomStream(random_seed);
 
-/*var expTable: [0..#networkDomain] real;*/
+var table_size: int = 1e8:int;
+
+var expTable: [0..#(EXP_TABLE_SIZE+1)] real;
+for (i) in 0..EXP_TABLE_SIZE {
+  expTable[i] = exp((i / EXP_TABLE_SIZE:real * 2 - 1) * MAX_EXP); // Precompute the exp() table
+  expTable[i] = expTable[i] / (expTable[i] + 1);                   // Precompute f(x) = x / (x + 1)
+}
 
 var train_words: int = 0;
 var word_count_actual = 0;
@@ -70,24 +80,24 @@ var alpha = 0.025;
 var starting_alpha = 1e-3;
 var sample = 1e-3;
 
+var table: [0..#table_size] int;
+
 proc InitUnigramTable() {
-/*
-  int a, i;
-  double train_words_pow = 0;
-  double d1, power = 0.75;
-  table = (int *)malloc(table_size * sizeof(int));
-  for (a = 0; a < vocab_size; a++) train_words_pow += pow(vocab[a].cn, power);
+  var a, i: int;
+  var train_words_pow: real = 0;
+  var d1: real;
+  var power: real = 0.75;
+  for (a) in 0..#vocab_size do train_words_pow += vocab[a].cn ** power;
   i = 0;
-  d1 = pow(vocab[i].cn, power) / train_words_pow;
-  for (a = 0; a < table_size; a++) {
+  d1 = (vocab[i].cn ** power) / train_words_pow;
+  for (a) in 0..#table_size {
     table[a] = i;
-    if (a / (double)table_size > d1) {
-      i++;
-      d1 += pow(vocab[i].cn, power) / train_words_pow;
+    if (a / table_size:real > d1) {
+      i += 1;
+      d1 += (vocab[i].cn ** power) / train_words_pow;
     }
-    if (i >= vocab_size) i = vocab_size - 1;
+    if (i >= vocab_size) then i = vocab_size - 1;
   }
-*/
 }
 
 var atCRLF = false;
@@ -165,8 +175,11 @@ proc SearchVocab(word: [?D] uint(8), len: int): int {
   return -1;
 }
 
-proc ReadWordIndex(): int {
-  return -1;
+proc ReadWordIndex(reader): int {
+  var word: [0..MAX_STRING] uint(8);
+  var len = ReadWord(word, reader);
+  if (len == 0) then return -2;
+  return SearchVocab(word, len);
 }
 
 // Adds a word to the vocabulary
@@ -534,127 +547,157 @@ proc InitNet() {
 }
 
 proc TrainModelThread() {
-  /*long long a, b, d, cw, word, last_word, sentence_length = 0, sentence_position = 0;
-  long long word_count = 0, last_word_count = 0, sen[MAX_SENTENCE_LENGTH + 1];
-  long long l1, l2, c, target, label, local_iter = iter;
-  unsigned long long next_random = (long long)id;
-  real f, g;
-  clock_t now;
-  real *neu1 = (real *)calloc(layer1_size, sizeof(real));
-  real *neu1e = (real *)calloc(layer1_size, sizeof(real));
-  FILE *fi = fopen(train_file, "rb");
-  fseek(fi, file_size / (long long)num_threads * (long long)id, SEEK_SET);
+  var a, d, cw, word, last_word: int;
+  var b: int(64);
+  var sentence_length = 0;
+  var sentence_position = 0;
+  var word_count = 0;
+  var last_word_count = 0;
+  var sen: [0..#(MAX_SENTENCE_LENGTH + 1)] int;
+  var l1, l2, c, target, labelx: int;
+  var local_iter = iterations;
+  var f, g: real;
+  var t: Timer;
+  var neuDomain = {0..#layer1_size};
+  var neu1: [neuDomain] real;
+  var neu1e: [neuDomain] real;
+
+  var trainFile = open(train_file, iomode.r);
+  var fileChunkSize = file_size / Locales.size;
+  var seekStart = fileChunkSize * here.id;
+  var seekStop = fileChunkSize * (here.id + 1);
+  var reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop);
+  var next_random: uint = (randStreamSeeded.getNext() * 25214903917:uint(64) + 11):uint(64);
+  var atEOF = false;
+
+  t.start();
+  var start = t.elapsed(TimeUnits.microseconds);
+
   while (1) {
     if (word_count - last_word_count > 10000) {
       word_count_actual += word_count - last_word_count;
       last_word_count = word_count;
-      if ((debug_mode > 1)) {
-        now=clock();
-        printf("%cAlpha: %f  Progress: %.2f%%  Words/thread/sec: %.2fk  ", 13, alpha,
-         word_count_actual / (real)(iter * train_words + 1) * 100,
-         word_count_actual / ((real)(now - start + 1) / (real)CLOCKS_PER_SEC * 1000));
-        fflush(stdout);
+      if (log_level > 1) {
+        var now = t.elapsed(TimeUnits.microseconds);
+        writef("%cAlpha: %f  Progress: %.2f%%  Words/thread/sec: %.2fk  ", 13, alpha,
+         word_count_actual / (iterations * train_words + 1) * 100,
+         word_count_actual / (now - start + 1));
+        stdout.flush();
       }
-      alpha = starting_alpha * (1 - word_count_actual / (real)(iter * train_words + 1));
-      if (alpha < starting_alpha * 0.0001) alpha = starting_alpha * 0.0001;
+      alpha = starting_alpha * (1 - word_count_actual / (iterations * train_words + 1):real);
+      if (alpha < starting_alpha * 0.0001) then alpha = starting_alpha * 0.0001;
     }
     if (sentence_length == 0) {
       while (1) {
-        word = ReadWordIndex(fi);
-        if (feof(fi)) break;
-        if (word == -1) continue;
-        word_count++;
-        if (word == 0) break;
+        word = ReadWordIndex(reader);
+        if (word == -2) {
+          atEOF = true;
+          break;
+        }
+        if (word == -1) then continue;
+        word_count += 1;
+        if (word == 0) then break;
         // The subsampling randomly discards frequent words while keeping the ranking same
         if (sample > 0) {
-          real ran = (sqrt(vocab[word].cn / (sample * train_words)) + 1) * (sample * train_words) / vocab[word].cn;
-          next_random = next_random * (unsigned long long)25214903917 + 11;
-          if (ran < (next_random & 0xFFFF) / (real)65536) continue;
+          var ran = (sqrt(vocab[word].cn / (sample * train_words)) + 1) * (sample * train_words) / vocab[word].cn;
+          next_random = (randStreamSeeded.getNext() * 25214903917:uint(64) + 11):uint(64);
+          if (ran < (next_random & 0xFFFF):real / 65536:real) then continue;
         }
         sen[sentence_length] = word;
-        sentence_length++;
-        if (sentence_length >= MAX_SENTENCE_LENGTH) break;
+        sentence_length += 1;
+        if (sentence_length >= MAX_SENTENCE_LENGTH) then break;
       }
       sentence_position = 0;
     }
-    if (feof(fi) || (word_count > train_words / num_threads)) {
+    if (atEOF || (word_count > train_words / Locales.size)) {
       word_count_actual += word_count - last_word_count;
-      local_iter--;
-      if (local_iter == 0) break;
+      local_iter -= 1;
+      if (local_iter == 0) then break;
       word_count = 0;
       last_word_count = 0;
       sentence_length = 0;
-      fseek(fi, file_size / (long long)num_threads * (long long)id, SEEK_SET);
+      /*fseek(fi, file_size / (long long)num_threads * (long long)id, SEEK_SET);*/
+      reader.close();
+      reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop);
+      atEOF = false;
       continue;
     }
     word = sen[sentence_position];
-    if (word == -1) continue;
-    for (c = 0; c < layer1_size; c++) neu1[c] = 0;
-    for (c = 0; c < layer1_size; c++) neu1e[c] = 0;
-    next_random = next_random * (unsigned long long)25214903917 + 11;
-    b = next_random % window;
+    if (word == -1) then continue;
+    neu1 = 0;
+    neu1e = 0;
+    next_random = (randStreamSeeded.getNext() * 25214903917:uint(64) + 11):uint(64);
+    b = (next_random % window: uint(64)):int(64);
     if (cbow) {  //train the cbow architecture
       // in -> hidden
       cw = 0;
-      for (a = b; a < window * 2 + 1 - b; a++) if (a != window) {
-        c = sentence_position - window + a;
-        if (c < 0) continue;
-        if (c >= sentence_length) continue;
-        last_word = sen[c];
-        if (last_word == -1) continue;
-        for (c = 0; c < layer1_size; c++) neu1[c] += syn0[c + last_word * layer1_size];
-        cw++;
+      for (a) in 0..#(window * 2 + 1 - b) {
+        if (a != window) {
+          c = sentence_position - window + a;
+          if (c < 0) then continue;
+          if (c >= sentence_length) then continue;
+          last_word = sen[c];
+          if (last_word == -1) then continue;
+          for (c) in 0..#layer1_size do neu1[c] += syn0[c + last_word * layer1_size];
+          cw += 1;
+        }
       }
       if (cw) {
-        for (c = 0; c < layer1_size; c++) neu1[c] /= cw;
-        if (hs) for (d = 0; d < vocab[word].codelen; d++) {
-          f = 0;
-          l2 = vocab[word].point[d] * layer1_size;
-          // Propagate hidden -> output
-          for (c = 0; c < layer1_size; c++) f += neu1[c] * syn1[c + l2];
-          if (f <= -MAX_EXP) continue;
-          else if (f >= MAX_EXP) continue;
-          else f = expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))];
-          // 'g' is the gradient multiplied by the learning rate
-          g = (1 - vocab[word].code[d] - f) * alpha;
-          // Propagate errors output -> hidden
-          for (c = 0; c < layer1_size; c++) neu1e[c] += g * syn1[c + l2];
-          // Learn weights hidden -> output
-          for (c = 0; c < layer1_size; c++) syn1[c + l2] += g * neu1[c];
+        neu1 /= cw;
+        if (hs) {
+           for (d) in 0..#vocab[word].node.codelen {
+            f = 0;
+            l2 = vocab[word].node.point[d] * layer1_size;
+            // Propagate hidden -> output
+            for (c) in 0..#layer1_size do f += neu1[c] * syn1[c + l2];
+            if (f <= -MAX_EXP) then continue;
+            else if (f >= MAX_EXP) then continue;
+            else f = expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int];
+            // 'g' is the gradient multiplied by the learning rate
+            g = (1 - vocab[word].node.code[d] - f) * alpha;
+            // Propagate errors output -> hidden
+            for (c) in 0..#layer1_size do neu1e[c] += g * syn1[c + l2];
+            // Learn weights hidden -> output
+            for (c) in 0..#layer1_size do syn1[c + l2] += g * neu1[c];
+          }
         }
         // NEGATIVE SAMPLING
-        if (negative > 0) for (d = 0; d < negative + 1; d++) {
-          if (d == 0) {
-            target = word;
-            label = 1;
-          } else {
-            next_random = next_random * (unsigned long long)25214903917 + 11;
-            target = table[(next_random >> 16) % table_size];
-            if (target == 0) target = next_random % (vocab_size - 1) + 1;
-            if (target == word) continue;
-            label = 0;
+        if (negative > 0) {
+          for (d) in 0..#(negative + 1) {
+            if (d == 0) {
+              target = word;
+              labelx = 1;
+            } else {
+              next_random = (randStreamSeeded.getNext() * 25214903917:uint(64) + 11):uint(64);
+              target = table[((next_random >> 16) % table_size:uint(64)):int];
+              if (target == 0) then target = (next_random % (vocab_size - 1):uint(64) + 1):int;
+              if (target == word) then continue;
+              labelx = 0;
+            }
+            l2 = target * layer1_size;
+            f = 0;
+            for (c) in 0..#layer1_size do f += neu1[c] * syn1neg[c + l2];
+            if (f > MAX_EXP) then g = (labelx - 1) * alpha;
+            else if (f < -MAX_EXP) then g = (labelx - 0) * alpha;
+            else g = (labelx - expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int]) * alpha;
+            for (c) in 0..#layer1_size do neu1e[c] += g * syn1neg[c + l2];
+            for (c) in 0..#layer1_size do syn1neg[c + l2] += g * neu1[c];
           }
-          l2 = target * layer1_size;
-          f = 0;
-          for (c = 0; c < layer1_size; c++) f += neu1[c] * syn1neg[c + l2];
-          if (f > MAX_EXP) g = (label - 1) * alpha;
-          else if (f < -MAX_EXP) g = (label - 0) * alpha;
-          else g = (label - expTable[(int)((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2))]) * alpha;
-          for (c = 0; c < layer1_size; c++) neu1e[c] += g * syn1neg[c + l2];
-          for (c = 0; c < layer1_size; c++) syn1neg[c + l2] += g * neu1[c];
         }
         // hidden -> in
-        for (a = b; a < window * 2 + 1 - b; a++) if (a != window) {
-          c = sentence_position - window + a;
-          if (c < 0) continue;
-          if (c >= sentence_length) continue;
-          last_word = sen[c];
-          if (last_word == -1) continue;
-          for (c = 0; c < layer1_size; c++) syn0[c + last_word * layer1_size] += neu1e[c];
+        for (a) in b..#(window * 2 + 1 - b) {
+          if (a != window) {
+            c = sentence_position - window + a;
+            if (c < 0) then continue;
+            if (c >= sentence_length) then continue;
+            last_word = sen[c];
+            if (last_word == -1) then continue;
+            for (c) in 0..#layer1_size do syn0[c + last_word * layer1_size] += neu1e[c];
+          }
         }
       }
     } else {  //train skip-gram
-      for (a = b; a < window * 2 + 1 - b; a++) if (a != window) {
+      /*for (a = b; a < window * 2 + 1 - b; a++) if (a != window) {
         c = sentence_position - window + a;
         if (c < 0) continue;
         if (c >= sentence_length) continue;
@@ -701,18 +744,17 @@ proc TrainModelThread() {
         }
         // Learn weights input -> hidden
         for (c = 0; c < layer1_size; c++) syn0[c + l1] += neu1e[c];
-      }
+      }*/
     }
-    sentence_position++;
+    sentence_position += 1;
     if (sentence_position >= sentence_length) {
       sentence_length = 0;
       continue;
     }
   }
-  fclose(fi);
-  free(neu1);
-  free(neu1e);
-  pthread_exit(NULL);*/
+  t.stop();
+  reader.close();
+  trainFile.close();
 }
 
 proc TrainModel() {
@@ -726,20 +768,27 @@ proc TrainModel() {
   if (output_file == "") then return;
   InitNet();
   if (negative > 0) then InitUnigramTable();
-  /*t.start();*/
-  /*for (a = 0; a < num_threads; a++) pthread_create(&pt[a], NULL, TrainModelThread, (void *)a);
-  for (a = 0; a < num_threads; a++) pthread_join(pt[a], NULL);
-  fo = fopen(output_file, "wb");
+
+  TrainModelThread();
+
+  var outputFile = open(output_file, iomode.cw);
+  var writer = outputFile.writer();
   if (classes == 0) {
     // Save the word vectors
-    fprintf(fo, "%lld %lld\n", vocab_size, layer1_size);
-    for (a = 0; a < vocab_size; a++) {
-      fprintf(fo, "%s ", vocab[a].word);
-      if (binary) for (b = 0; b < layer1_size; b++) fwrite(&syn0[a * layer1_size + b], sizeof(real), 1, fo);
-      else for (b = 0; b < layer1_size; b++) fprintf(fo, "%lf ", syn0[a * layer1_size + b]);
-      fprintf(fo, "\n");
+    /*fprintf(fo, "%lld %lld\n", vocab_size, layer1_size);*/
+    writer.writeln(vocab_size, " ", layer1_size);
+    for (a) in 0..#vocab_size {
+      var vw = vocab[a].word;
+      /*fprintf(fo, "%s ", vocab[a].word);*/
+      for (j) in 0..#vw.len {
+        writer.writef("%c", vw.word[j]);
+      }
+      writer.write(" ");
+      if (binary) then for (b) in 0..#layer1_size do writer.write(syn0[a * layer1_size + b]);
+      else for (b) in 0..#layer1_size do writer.write(syn0[a * layer1_size + b], " ");
+      writer.writeln();
     }
-  } else {
+  }/* else {
     // Run K-means on the word vectors
     int clcn = classes, iter = 10, closeid;
     int *centcn = (int *)malloc(classes * sizeof(int));
@@ -784,6 +833,8 @@ proc TrainModel() {
     free(cl);
   }
   fclose(fo);*/
+  writer.close();
+  outputFile.close();
 }
 
 // Utilities
@@ -813,5 +864,8 @@ inline proc wordToInt(word: [?] uint(8), len: int): int {
   }
   return cn;
 }
+
+var foo = randStreamSeeded.getNext();
+writeln(foo);
 
 TrainModel();
