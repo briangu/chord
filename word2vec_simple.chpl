@@ -19,7 +19,7 @@ config const output_file: string = "";
 config const hs = 0;
 config const negative = 5;
 config const layer1_size = 100;
-config const random_seed = 0;
+/*config const random_seed = 0;*/
 config const iterations = 5;
 config const window = 5;
 config const cbow = 1;
@@ -62,25 +62,26 @@ var syn1: [syn1Domain] real;
 var syn1negDomain = {0..#1};
 var syn1neg: [syn1negDomain] real;
 
-var randStreamSeeded = new RandomStream(random_seed);
+/*var randStreamSeeded = new RandomStream(random_seed);*/
 
 var table_size: int = 1e8:int;
 
 var expTable: [0..#(EXP_TABLE_SIZE+1)] real;
-for (i) in 0..EXP_TABLE_SIZE {
+/*for (i) in 0..#EXP_TABLE_SIZE {
   expTable[i] = exp((i / EXP_TABLE_SIZE:real * 2 - 1) * MAX_EXP); // Precompute the exp() table
   expTable[i] = expTable[i] / (expTable[i] + 1);                   // Precompute f(x) = x / (x + 1)
-}
+}*/
 
 var train_words: int = 0;
 var word_count_actual = 0;
 var file_size = 0;
 var classes = 0;
-var alpha = 0.025;
-var starting_alpha = 1e-3;
+var alpha = 0.025 * 2;
+var starting_alpha: real;
 var sample = 1e-3;
 
 var table: [0..#table_size] int;
+var atCRLF = false;
 
 proc InitUnigramTable() {
   var a, i: int;
@@ -99,8 +100,6 @@ proc InitUnigramTable() {
     if (i >= vocab_size) then i = vocab_size - 1;
   }
 }
-
-var atCRLF = false;
 
 inline proc readNextChar(ref ch: uint(8), reader): bool {
   if (atCRLF) {
@@ -314,7 +313,7 @@ proc SortVocab() {
     }
   }
 
-  vocabDomain = {0..#vocab_size + 1};
+  vocabDomain = {0..#(vocab_size + 1)};
 
   // Allocate memory for the binary tree construction
   for (a) in 0..#vocab_size {
@@ -361,6 +360,8 @@ proc CreateBinaryTree() {
     count[a] = vocab[a].cn;
   }
 
+  /*writeln(count[0], " ", count[vocab_size]);
+*/
   pos1 = vocab_size - 1;
   pos2 = vocab_size;
 
@@ -409,10 +410,13 @@ proc CreateBinaryTree() {
     }
     vocab[a].node.codelen = i: uint(8);
     vocab[a].node.point[0] = vocab_size - 2;
-    for (b) in 0..#1 {
+    /*write(vocab[a].node.codelen, " ", vocab[a].node.point[0]);*/
+    for (b) in 0..#i {
       vocab[a].node.code[i - b - 1] = code[b];
       vocab[a].node.point[i - b] = point[b] - vocab_size;
+      /*write(" ", vocab[a].node.code[i - b - 1], " ", vocab[a].node.point[i - b]);*/
     }
+    /*writeln();*/
   }
 }
 
@@ -502,6 +506,8 @@ proc ReadVocab() {
 
   vocab_hash = -1;
   vocab_size = 0;
+  train_words = 0;
+
   while (1) {
     len = ReadWord(word, r);
     if (len == 0) then break;
@@ -511,6 +517,7 @@ proc ReadVocab() {
     len = ReadWord(word, r);
     if (len == 0) then break;
     vocab[a].cn = wordToInt(word, len);
+    train_words += vocab[a].cn;
 
     // skip CRLF
     ReadWord(word, r);
@@ -519,13 +526,16 @@ proc ReadVocab() {
   r.close();
   f.close();
 
-  SortVocab();
+  /*SortVocab();*/
   if (log_level > 0) {
     writeln("Vocab size: ", vocab_size);
     writeln("Words in train file: ", train_words);
   }
 
   /*file_size = ftell(fin);*/
+  for (a) in 0..#vocab_size {
+    vocab[a].node = new VocabTreeNode();
+  }
 }
 
 proc InitNet() {
@@ -536,60 +546,70 @@ proc InitNet() {
     syn1 = 0;
   }
 
-  if (negative>0) {
+  if (negative > 0) {
     syn1negDomain = syn0Domain;
     syn1neg = 0;
   }
 
-  randStreamSeeded.fillRandom(syn0);
+  /*randStreamSeeded.fillRandom(syn0);*/
+  var next_random: uint(64) = 1;
+  for (a) in 0..#vocab_size {
+    for (b) in 0..#layer1_size {
+      next_random = next_random * 25214903917:uint(64) + 11;
+      syn0[a * layer1_size + b] = (((next_random & 0xFFFF) / 65536:real) - 0.5) / layer1_size;
+    }
+  }
 
   CreateBinaryTree();
 }
 
 proc TrainModelThread() {
-  var a, d, cw, word, last_word: int;
+  var a, d, cw, word, last_word, l1, l2, c, target, labelx: int;
   var b: int(64);
   var sentence_length = 0;
   var sentence_position = 0;
   var word_count = 0;
   var last_word_count = 0;
   var sen: [0..#(MAX_SENTENCE_LENGTH + 1)] int;
-  var l1, l2, c, target, labelx: int;
   var local_iter = iterations;
   var f, g: real;
   var t: Timer;
+
   var neuDomain = {0..#layer1_size};
-  var neu1: [neuDomain] real;
-  var neu1e: [neuDomain] real;
+  var neu1: [neuDomain] real = 0.0;
+  var neu1e: [neuDomain] real = 0.0;
 
   var trainFile = open(train_file, iomode.r);
-  var fileChunkSize = file_size / Locales.size;
+  var fileChunkSize = trainFile.length() / Locales.size;
   var seekStart = fileChunkSize * here.id;
   var seekStop = fileChunkSize * (here.id + 1);
   var reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop);
-  var next_random: uint = (randStreamSeeded.getNext() * 25214903917:uint(64) + 11):uint(64);
+  var next_random: uint(64) = here.id:uint(64); //(randStreamSeeded.getNext() * 25214903917:uint(64) + 11):uint(64);
   var atEOF = false;
 
   t.start();
   var start = t.elapsed(TimeUnits.microseconds);
 
   while (1) {
+    /*writeln(train_words, " ", word_count, " ", last_word_count, " ", word_count_actual);*/
     if (word_count - last_word_count > 10000) {
       word_count_actual += word_count - last_word_count;
       last_word_count = word_count;
       if (log_level > 1) {
         var now = t.elapsed(TimeUnits.microseconds);
-        writef("%cAlpha: %f  Progress: %.2f%%  Words/thread/sec: %.2fk  ", 13, alpha,
-         word_count_actual / (iterations * train_words + 1) * 100,
-         word_count_actual / (now - start + 1));
+        write("\rAlpha: ", alpha,
+              "  Progress: ", word_count_actual / (iterations * train_words + 1):real * 100,
+              "  Words/thread/sec: ", word_count_actual / (now - start + 1), "k");
         stdout.flush();
       }
       alpha = starting_alpha * (1 - word_count_actual / (iterations * train_words + 1):real);
       if (alpha < starting_alpha * 0.0001) then alpha = starting_alpha * 0.0001;
     }
+    /*writeln("here!");*/
     if (sentence_length == 0) {
       while (1) {
         word = ReadWordIndex(reader);
+        /*writeln("word idx ", word);*/
         if (word == -2) {
           atEOF = true;
           break;
@@ -599,8 +619,9 @@ proc TrainModelThread() {
         if (word == 0) then break;
         // The subsampling randomly discards frequent words while keeping the ranking same
         if (sample > 0) {
-          var ran = (sqrt(vocab[word].cn / (sample * train_words)) + 1) * (sample * train_words) / vocab[word].cn;
-          next_random = (randStreamSeeded.getNext() * 25214903917:uint(64) + 11):uint(64);
+          var ran = (sqrt(vocab[word].cn / (sample * train_words):real) + 1) * (sample * train_words):real / vocab[word].cn;
+          /*next_random = (randStreamSeeded.getNext() * 25214903917:uint(64) + 11):uint(64);*/
+          next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
           if (ran < (next_random & 0xFFFF):real / 65536:real) then continue;
         }
         sen[sentence_length] = word;
@@ -608,7 +629,12 @@ proc TrainModelThread() {
         if (sentence_length >= MAX_SENTENCE_LENGTH) then break;
       }
       sentence_position = 0;
+      for (q) in 0..#sentence_length {
+        write(sen[q], " ");
+      }
+      writeln();
     }
+    /*writeln("here 2! ", atEOF, " ", train_words / Locales.size);*/
     if (atEOF || (word_count > train_words / Locales.size)) {
       word_count_actual += word_count - last_word_count;
       local_iter -= 1;
@@ -622,16 +648,18 @@ proc TrainModelThread() {
       atEOF = false;
       continue;
     }
+    /*writeln("here 3!");*/
     word = sen[sentence_position];
     if (word == -1) then continue;
     neu1 = 0;
     neu1e = 0;
-    next_random = (randStreamSeeded.getNext() * 25214903917:uint(64) + 11):uint(64);
+    /*next_random = (randStreamSeeded.getNext() * 25214903917:uint(64) + 11):uint(64);*/
+    next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
     b = (next_random % window: uint(64)):int(64);
     if (cbow) {  //train the cbow architecture
       // in -> hidden
       cw = 0;
-      for (a) in 0..#(window * 2 + 1 - b) {
+      for (a) in b..(window * 2 - b) {
         if (a != window) {
           c = sentence_position - window + a;
           if (c < 0) then continue;
@@ -643,18 +671,24 @@ proc TrainModelThread() {
         }
       }
       if (cw) {
-        neu1 /= cw;
+        for (c) in 0..#layer1_size do neu1[c] /= cw;
+        /*neu1 /= cw;*/
         if (hs) {
            for (d) in 0..#vocab[word].node.codelen {
             f = 0;
             l2 = vocab[word].node.point[d] * layer1_size;
+            /*writeln(l2);*/
             // Propagate hidden -> output
             for (c) in 0..#layer1_size do f += neu1[c] * syn1[c + l2];
             if (f <= -MAX_EXP) then continue;
             else if (f >= MAX_EXP) then continue;
-            else f = expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int];
+            else {
+              var idx = floor((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int;
+              f = expTable[idx];
+            }
             // 'g' is the gradient multiplied by the learning rate
             g = (1 - vocab[word].node.code[d] - f) * alpha;
+            /*writeln(alpha, " ", f, " ", g);*/
             // Propagate errors output -> hidden
             for (c) in 0..#layer1_size do neu1e[c] += g * syn1[c + l2];
             // Learn weights hidden -> output
@@ -668,7 +702,8 @@ proc TrainModelThread() {
               target = word;
               labelx = 1;
             } else {
-              next_random = (randStreamSeeded.getNext() * 25214903917:uint(64) + 11):uint(64);
+              /*next_random = (randStreamSeeded.getNext() * 25214903917:uint(64) + 11):uint(64);*/
+              next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
               target = table[((next_random >> 16) % table_size:uint(64)):int];
               if (target == 0) then target = (next_random % (vocab_size - 1):uint(64) + 1):int;
               if (target == word) then continue;
@@ -685,7 +720,7 @@ proc TrainModelThread() {
           }
         }
         // hidden -> in
-        for (a) in b..#(window * 2 + 1 - b) {
+        for (a) in b..(window * 2 - b) {
           if (a != window) {
             c = sentence_position - window + a;
             if (c < 0) then continue;
@@ -755,6 +790,13 @@ proc TrainModelThread() {
   t.stop();
   reader.close();
   trainFile.close();
+}
+
+proc dump() {
+  writeln("table");
+  for (a) in 0..#table_size {
+    writeln(table[a]);
+  }
 }
 
 proc TrainModel() {
@@ -865,7 +907,8 @@ inline proc wordToInt(word: [?] uint(8), len: int): int {
   return cn;
 }
 
-var foo = randStreamSeeded.getNext();
-writeln(foo);
-
+for (i) in 0..#EXP_TABLE_SIZE {
+  expTable[i] = exp((i / EXP_TABLE_SIZE:real * 2 - 1) * MAX_EXP); // Precompute the exp() table
+  expTable[i] = expTable[i] / (expTable[i] + 1);                   // Precompute f(x) = x / (x + 1)
+}
 TrainModel();
