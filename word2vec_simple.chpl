@@ -827,7 +827,7 @@ proc TrainModel() {
         writer.writef("%c", vw.word[j]);
       }
       writer.write(" ");
-      if (binary) then for (b) in 0..#layer1_size do writer.write(syn0[a * layer1_size + b]);
+      if (binary) then for (b) in 0..#layer1_size do writer.writef("%|4r", syn0[a * layer1_size + b]);
       else for (b) in 0..#layer1_size do writer.write(syn0[a * layer1_size + b], " ");
       writer.writeln();
     }
