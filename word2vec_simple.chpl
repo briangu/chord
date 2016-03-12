@@ -432,7 +432,7 @@ proc LearnVocabFromTrainFile() {
     printf("ERROR: training data file not found!\n");
     exit(1);
   }*/
-  var r = f.reader(kind=ionative);
+  var r = f.reader(kind=ionative, locking=false);
 
   vocab_size = 0;
 
@@ -477,7 +477,7 @@ proc LearnVocabFromTrainFile() {
 
 proc SaveVocab() {
   var f = open(save_vocab_file, iomode.cw);
-  var w = f.writer();
+  var w = f.writer(locking=false);
   for (i) in 0..#vocab_size {
     var vw = vocab[i].word;
     /* parallelizes output! [j in 0..#vw.len] w.writef("%c", vw.word[j]);*/
@@ -629,10 +629,10 @@ proc TrainModelThread() {
         if (sentence_length >= MAX_SENTENCE_LENGTH) then break;
       }
       sentence_position = 0;
-      for (q) in 0..#sentence_length {
+      /*for (q) in 0..#sentence_length {
         write(sen[q], " ");
-      }
-      writeln();
+      }*/
+      /*writeln();*/
     }
     /*writeln("here 2! ", atEOF, " ", train_words / Locales.size);*/
     if (atEOF || (word_count > train_words / Locales.size)) {
@@ -790,6 +790,7 @@ proc TrainModelThread() {
   t.stop();
   reader.close();
   trainFile.close();
+  writeln();
 }
 
 proc dump() {
@@ -814,7 +815,7 @@ proc TrainModel() {
   TrainModelThread();
 
   var outputFile = open(output_file, iomode.cw);
-  var writer = outputFile.writer();
+  var writer = outputFile.writer(locking=false);
   if (classes == 0) {
     // Save the word vectors
     /*fprintf(fo, "%lld %lld\n", vocab_size, layer1_size);*/
@@ -907,8 +908,10 @@ inline proc wordToInt(word: [?] uint(8), len: int): int {
   return cn;
 }
 
-for (i) in 0..#EXP_TABLE_SIZE {
-  expTable[i] = exp((i / EXP_TABLE_SIZE:real * 2 - 1) * MAX_EXP); // Precompute the exp() table
-  expTable[i] = expTable[i] / (expTable[i] + 1);                   // Precompute f(x) = x / (x + 1)
+local {
+  for (i) in 0..#EXP_TABLE_SIZE {
+    expTable[i] = exp((i / EXP_TABLE_SIZE:real * 2 - 1) * MAX_EXP); // Precompute the exp() table
+    expTable[i] = expTable[i] / (expTable[i] + 1);                   // Precompute f(x) = x / (x + 1)
+  }
+  TrainModel();
 }
-TrainModel();
