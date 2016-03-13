@@ -239,7 +239,7 @@ proc XInsertionSort(Data: [?Dom] VocabEntry, doublecheck=false, param reverse=fa
   /*if (doublecheck) then VerifySort(Data, "InsertionSort", reverse);*/
 }
 
-proc QuickSort(Data: [?Dom] VocabEntry, minlen=16, doublecheck=false, param reverse=false) where Dom.rank == 1 {
+proc QuickSort(Data: [?Dom] VocabEntry, minlen=7, doublecheck=false, param reverse=false) where Dom.rank == 1 {
   // grab obvious indices
   const lo = Dom.low,
         hi = Dom.high,
@@ -596,10 +596,12 @@ proc TrainModelThread() {
       word_count_actual += word_count - last_word_count;
       last_word_count = word_count;
       if (log_level > 1) {
-        var now = t.elapsed(TimeUnits.microseconds);
+        var now = t.elapsed(TimeUnits.milliseconds);
         write("\rAlpha: ", alpha,
-              "  Progress: ", word_count_actual / (iterations * train_words + 1):real * 100,
-              "  Words/thread/sec: ", word_count_actual / (now - start + 1), "k");
+              "  word_count_actual: ", word_count_actual,
+              "  iterations ", iterations, " local_iter ", local_iter, " train_words ", train_words, " ", (iterations * train_words + 1):real,
+              "  Progress: ", (word_count_actual / (iterations * train_words + 1):real),
+              "  Words/thread/sec: ", word_count_actual / ((now - start + 1) / 1000) / 1000, "k");
         stdout.flush();
       }
       alpha = starting_alpha * (1 - word_count_actual / (iterations * train_words + 1):real);
@@ -651,8 +653,10 @@ proc TrainModelThread() {
     /*writeln("here 3!");*/
     word = sen[sentence_position];
     if (word == -1) then continue;
-    neu1 = 0;
-    neu1e = 0;
+    /*neu1 = 0;
+    neu1e = 0;*/
+    for (c) in 0..#layer1_size do neu1[c] = 0;
+    for (c) in 0..#layer1_size do neu1e[c] = 0;
     /*next_random = (randStreamSeeded.getNext() * 25214903917:uint(64) + 11):uint(64);*/
     next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
     b = (next_random % window: uint(64)):int(64);
