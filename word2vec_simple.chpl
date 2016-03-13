@@ -563,7 +563,7 @@ proc InitNet() {
   CreateBinaryTree();
 }
 
-proc TrainModelThread() {
+proc TrainModelThread(tf: string) {
   var a, d, cw, word, last_word, l1, l2, c, target, labelx: int;
   var b: int(64);
   var sentence_length = 0;
@@ -579,7 +579,7 @@ proc TrainModelThread() {
   var neu1: [neuDomain] real = 0.0;
   var neu1e: [neuDomain] real = 0.0;
 
-  var trainFile = open(train_file, iomode.r);
+  var trainFile = open(tf, iomode.r);
   var fileChunkSize = trainFile.length() / Locales.size;
   var seekStart = fileChunkSize * here.id;
   var seekStop = fileChunkSize * (here.id + 1);
@@ -655,8 +655,10 @@ proc TrainModelThread() {
     if (word == -1) then continue;
     /*neu1 = 0;
     neu1e = 0;*/
-    for (c) in 0..#layer1_size do neu1[c] = 0;
-    for (c) in 0..#layer1_size do neu1e[c] = 0;
+    for (c) in 0..#layer1_size {
+      neu1[c] = 0;
+      neu1e[c] = 0;
+    }
     /*next_random = (randStreamSeeded.getNext() * 25214903917:uint(64) + 11):uint(64);*/
     next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
     b = (next_random % window: uint(64)):int(64);
@@ -816,7 +818,14 @@ proc TrainModel() {
   InitNet();
   if (negative > 0) then InitUnigramTable();
 
-  TrainModelThread();
+  forall loc in Locales {
+    on loc {
+      var tf = train_file;
+      /*local {*/
+        TrainModelThread(tf);
+      /*}*/
+    }
+  }
 
   var outputFile = open(output_file, iomode.cw);
   var writer = outputFile.writer(locking=false);
@@ -912,10 +921,8 @@ inline proc wordToInt(word: [?] uint(8), len: int): int {
   return cn;
 }
 
-local {
-  for (i) in 0..#EXP_TABLE_SIZE {
-    expTable[i] = exp((i / EXP_TABLE_SIZE:real * 2 - 1) * MAX_EXP); // Precompute the exp() table
-    expTable[i] = expTable[i] / (expTable[i] + 1);                   // Precompute f(x) = x / (x + 1)
-  }
-  TrainModel();
+for (i) in 0..#EXP_TABLE_SIZE {
+  expTable[i] = exp((i / EXP_TABLE_SIZE:real * 2 - 1) * MAX_EXP); // Precompute the exp() table
+  expTable[i] = expTable[i] / (expTable[i] + 1);                   // Precompute f(x) = x / (x + 1)
 }
+TrainModel();
