@@ -147,6 +147,11 @@ class VocabContext {
   const EXP_TABLE_SIZE = 1000;
   const MAX_EXP = 6;
   const MAX_STRING = 100;
+  const MAX_CODE_LENGTH = 40: uint(8);
+
+  /*const SPACE = ascii(' '): uint(8);
+  const TAB = ascii('\t'): uint(8);
+  const CRLF = ascii('\n'): uint(8);*/
 
   var train_words: int = 0;
 
@@ -159,10 +164,6 @@ class VocabContext {
 
   const table_size: int = 1e8:int;
   var table: [0..#table_size] int;
-
-  const SPACE = ascii(' '): uint(8);
-  const TAB = ascii('\t'): uint(8);
-  const CRLF = ascii('\n'): uint(8);
 
   /*var atCRLF = false;*/
 
@@ -290,7 +291,7 @@ class VocabContext {
 
     // Allocate memory for the binary tree construction
     for (a) in 0..#vocab_size {
-      vocab[a].node = new VocabTreeNode();
+      vocab[a].node = new VocabTreeNode(MAX_CODE_LENGTH);
     }
   }
 
@@ -315,8 +316,6 @@ class VocabContext {
   }
 
   proc CreateBinaryTree() {
-    const MAX_CODE_LENGTH = 40;
-
     var b: int(64);
     var i: int(64);
     var min1i: int(64);
@@ -506,7 +505,7 @@ class VocabContext {
 
     /*file_size = ftell(fin);*/
     for (a) in 0..#vocab_size {
-      vocab[a].node = new VocabTreeNode();
+      vocab[a].node = new VocabTreeNode(MAX_CODE_LENGTH);
     }
   }
 }
