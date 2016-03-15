@@ -1,30 +1,30 @@
 use BlockDist, CyclicDist, BlockCycDist, ReplicatedDist, Time, Logging, Random, WordUtil;
 
 // NOTE: these are all on locale 0 and should not be accessed directly from tasks
-config const log_level = 2;
-config const vocab_hash_size = 30000000;  // Maximum 30 * 0.7 = 21M words in the vocabulary
-config const initial_vocab_max_size = 1000;
-config const min_count = 5;
-config const train_file = "";
-config const save_vocab_file = "";
-config const read_vocab_file = "";
-config const output_file = "";
-config const hs = 0;
-config const negative = 5;
-config const layer1_size = 100;
-config const iterations = 5;
-config const window = 5;
-config const cbow = 1;
-config const binary = 0;
-config const sample = 1e-3;
-config const alpha = 0.025 * 2;
-config const classes = 0;
+config const x_log_level = 2;
+config const x_vocab_hash_size = 30000000;  // Maximum 30 * 0.7 = 21M words in the vocabulary
+config const x_initial_vocab_max_size = 1000;
+config const x_min_count = 5;
+config const x_train_file = "";
+config const x_save_vocab_file = "";
+config const x_read_vocab_file = "";
+config const x_output_file = "";
+config const x_hs = 0;
+config const x_negative = 5;
+config const x_layer1_size = 100;
+config const x_iterations = 5;
+config const x_window = 5;
+config const x_cbow = 1;
+config const x_binary = 0;
+config const x_sample = 1e-3;
+config const x_alpha = 0.025 * 2;
+config const x_classes = 0;
 
 const Space = {0..Locales.size-1};
 const ReplicatedSpace = Space dmapped ReplicatedDist();
 var ConfigPartitions: [ReplicatedSpace] ConfigContext;
 var VocabPartitions: [ReplicatedSpace] VocabContext;
-/*var TaskPartitions: [ReplicatedSpace] TaskContext;*/
+var NetworkPartitions: [ReplicatedSpace] NetworkContext;
 
 
 class VocabWord {
@@ -141,35 +141,36 @@ class ConfigContext {
 }
 
 class VocabContext {
+  var vocab_hash_size: int;
+  var vocab_max_size: int;
+  var min_count: int;
+
   var vocab_size = 0;
-  var vocab_max_size = initial_vocab_max_size;
 
   const EXP_TABLE_SIZE = 1000;
   const MAX_EXP = 6;
   const MAX_STRING = 100;
   const MAX_CODE_LENGTH = 40: uint(8);
 
-  /*const SPACE = ascii(' '): uint(8);
-  const TAB = ascii('\t'): uint(8);
-  const CRLF = ascii('\n'): uint(8);*/
-
   var train_words: int = 0;
 
   var vocabDomain = {0..#vocab_max_size};
   var vocab: [vocabDomain] VocabEntry;
 
-  var vocab_hash: [0..#vocab_hash_size] int = -1;
+  var vocabHashDomain = {0..#vocab_hash_size};
+  var vocab_hash: [vocabHashDomain] int = -1;
 
   var expTable: [0..#(EXP_TABLE_SIZE+1)] real;
 
   const table_size: int = 1e8:int;
   var table: [0..#table_size] int;
 
-  /*var atCRLF = false;*/
-
-  proc VocabContext(vocab_size: int, vocab_max_size: int) {
-    this.vocab_size = vocab_size;
+  proc VocabContext(vocab_hash_size: int, vocab_max_size: int, min_count: int) {
+    this.vocab_hash_size = vocab_hash_size;
     this.vocab_max_size = vocab_max_size;
+    this.min_count = min_count;
+    this.vocabDomain = {0..#vocab_max_size};
+    this.vocabHashDomain = {0..#vocab_hash_size};
 
     for (i) in 0..#EXP_TABLE_SIZE {
       expTable[i] = exp((i / EXP_TABLE_SIZE:real * 2 - 1) * MAX_EXP); // Precompute the exp() table
@@ -253,6 +254,19 @@ class VocabContext {
     }
     vocab_hash[hash] = vocab_size - 1;
     return vocab_size - 1;
+  }
+
+  inline proc GetWordHash(word: VocabWord): int {
+    return GetWordHash(word.word, word.len);
+  }
+
+  inline proc GetWordHash(word: [?] uint(8), len: int): int {
+    var hash: uint = 0;
+    for (ch) in 0..#len {
+      hash = hash * 257 + word[ch]: uint;
+    }
+    hash = hash % vocab_hash_size: uint;
+    return hash: int;
   }
 
   proc SortVocab() {
@@ -389,7 +403,7 @@ class VocabContext {
     }
   }
 
-  proc LearnVocabFromTrainFile() {
+  proc LearnVocabFromTrainFile(train_file: string) {
     var word: [0..#MAX_STRING] uint(8);
     var i: int(64);
     var len: int;
@@ -445,7 +459,7 @@ class VocabContext {
     f.close();
   }
 
-  proc SaveVocab() {
+  proc SaveVocab(save_vocab_file: string) {
     var f = open(save_vocab_file, iomode.cw);
     var w = f.writer(locking=false);
     for (i) in 0..#vocab_size {
@@ -460,7 +474,7 @@ class VocabContext {
     f.close();
   }
 
-  proc ReadVocab() {
+  proc ReadVocab(read_vocab_file: string) {
     var a: int(64);
     var cn: int;
     var c: uint(8);
@@ -513,6 +527,8 @@ class VocabContext {
 class NetworkContext {
   var vocab_size: int;
   var layer1_size: int;
+  var hs: int;
+  var negative: int;
 
   var syn0Domain = {0..#vocab_size*layer1_size};
   var syn0: [syn0Domain] real;
@@ -561,6 +577,14 @@ class TaskContext {
   proc TrainModelTask() {
     const MAX_SENTENCE_LENGTH = 1000;
 
+    const layer1_size = configContext.layer1_size;
+    const sample = configContext.sample;
+    const window = configContext.window;
+    const cbow = configContext.cbow;
+    const hs = configContext.hs;
+    const negative = configContext.negative;
+    const vocab_hash_size = vocabContext.vocab_hash_size;
+
     var a, d, cw, word, last_word, l1, l2, c, target, labelx: int;
     var b: int(64);
     var sentence_length = 0;
@@ -580,7 +604,7 @@ class TaskContext {
     var fileChunkSize = trainFile.length() / Locales.size;
     var seekStart = fileChunkSize * here.id;
     var seekStop = fileChunkSize * (here.id + 1);
-    var reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop);
+    var reader = trainFile.reader(kind = ionative, locking=false); //, start=seekStart, end=seekStop);
     var next_random: uint(64) = here.id:uint(64); //(randStreamSeeded.getNext() * 25214903917:uint(64) + 11):uint(64);
     var atEOF = false;
     var alpha = configContext.alpha;
@@ -598,20 +622,21 @@ class TaskContext {
     var start = t.elapsed(TimeUnits.microseconds);
 
     while (1) {
-      /*writeln(train_words, " ", word_count, " ", last_word_count, " ", word_count_actual);*/
+      /*if here.id == 1 then info(train_words, " ", word_count, " ", last_word_count, " ", word_count_actual);*/
       if (word_count - last_word_count > 10000) {
         word_count_actual += word_count - last_word_count;
         last_word_count = word_count;
         if (log_level > 1) {
           var now = t.elapsed(TimeUnits.milliseconds);
-          write("\rAlpha: ", alpha,
+          /*write("\rAlpha: ", alpha,
                 "  Progress: ", (word_count_actual / (iterations * train_words + 1):real),
                 "  Words/thread/sec: ", word_count_actual / ((now - start + 1) / 1000) / 1000, "k");
-          stdout.flush();
+          stdout.flush();*/
         }
         alpha = starting_alpha * (1 - word_count_actual / (iterations * train_words + 1):real);
         if (alpha < starting_alpha * 0.0001) then alpha = starting_alpha * 0.0001;
       }
+      /*if (here.id == 1) then info("sentence_length ", word_count);*/
       if (sentence_length == 0) {
         while (1) {
           word = vocabContext.ReadWordIndex(reader, atCRLF);
@@ -636,12 +661,14 @@ class TaskContext {
         sentence_position = 0;
       }
       if (atEOF || (word_count > train_words / Locales.size)) {
+        if (here.id == 1) then info("atEOF ", word_count);
         word_count_actual += word_count - last_word_count;
         local_iter -= 1;
         if (local_iter == 0) then break;
         word_count = 0;
         last_word_count = 0;
         sentence_length = 0;
+
         reader.close();
         reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop);
         atEOF = false;
@@ -653,9 +680,12 @@ class TaskContext {
         neu1[c] = 0;
         neu1e[c] = 0;
       }
+      /*if (here.id == 1) then info("next_random ", word_count);*/
+
       /*next_random = (randStreamSeeded.getNext() * 25214903917:uint(64) + 11):uint(64);*/
       next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
       b = (next_random % window: uint(64)):int(64);
+      /*if (here.id == 1) then info("cbow ", word_count);*/
       if (cbow) {  //train the cbow architecture
         // in -> hidden
         cw = 0;
@@ -794,48 +824,71 @@ class TaskContext {
   }
 }
 
-inline proc GetWordHash(word: VocabWord): int {
-  return GetWordHash(word.word, word.len);
-}
-
-inline proc GetWordHash(word: [?] uint(8), len: int): int {
-  var hash: uint = 0;
-  for (ch) in 0..#len {
-    hash = hash * 257 + word[ch]: uint;
-  }
-  hash = hash % vocab_hash_size: uint;
-  return hash: int;
-}
-
 proc TrainModel() {
   var a, b, c, d: int;
   var t: Timer;
 
   var configContext = ConfigPartitions[here.id];
 
-  var vocabContext = new VocabContext();
+  /*var vocabContext = new VocabContext(
+    configContext.vocab_hash_size,
+    configContext.initial_vocab_max_size,
+    configContext.min_count);*/
+
+  const train_file = configContext.train_file;
+  const read_vocab_file = configContext.read_vocab_file;
+  const save_vocab_file = configContext.save_vocab_file;
+  const output_file = configContext.output_file;
+  const negative = configContext.negative;
 
   info("Starting training using file ", train_file);
-  if (read_vocab_file != "") then vocabContext.ReadVocab(); else vocabContext.LearnVocabFromTrainFile();
-  if (save_vocab_file != "") then vocabContext.SaveVocab();
-  if (output_file == "") then return;
+  /*if (read_vocab_file != "") then vocabContext.ReadVocab(read_vocab_file); else vocabContext.LearnVocabFromTrainFile(train_file);
+  if (save_vocab_file != "") then vocabContext.SaveVocab(save_vocab_file);
+  if (output_file == "") then return;*/
 
-  var networkContext = new NetworkContext(vocabContext.vocab_size, configContext.layer1_size);
-  networkContext.InitNet();
+  /*var networkContext = new NetworkContext(vocabContext.vocab_size, configContext.layer1_size, configContext.hs, configContext.negative);
+  networkContext.InitNet();*/
 
-  vocabContext.CreateBinaryTree();
-  if (negative > 0) then vocabContext.InitUnigramTable();
+  /*vocabContext.CreateBinaryTree();
+  if (negative > 0) then vocabContext.InitUnigramTable();*/
 
   forall loc in Locales {
     on loc {
+      var configContext = ConfigPartitions[here.id];
+
       // copy the context to the locale
+      var vocabContext = new VocabContext(
+        configContext.vocab_hash_size,
+        configContext.initial_vocab_max_size,
+        configContext.min_count);
+
+      vocabContext.LearnVocabFromTrainFile(configContext.train_file);
+      vocabContext.CreateBinaryTree();
+      if (negative > 0) then vocabContext.InitUnigramTable();
+
       VocabPartitions[here.id] = vocabContext;
+
+      var networkContext = new NetworkContext(
+        vocabContext.vocab_size,
+        configContext.layer1_size,
+        configContext.hs,
+        configContext.negative
+        );
+      networkContext.InitNet();
+
+      NetworkPartitions[here.id] = networkContext;
+
       var taskContext = new TaskContext(networkContext);
       /*TaskPartitions[here.id] = taskContext;*/
+      info("here!");
       taskContext.TrainModelTask();
+      info("done!");
     }
   }
 
+  var networkContext = NetworkPartitions[here.id];
+  var vocabContext = VocabPartitions[here.id];
+  
   var outputFile = open(configContext.output_file, iomode.cw);
   var writer = outputFile.writer(locking=false);
   if (configContext.classes == 0) {
@@ -905,24 +958,24 @@ proc TrainModel() {
 for loc in Locales {
   on loc {
     ConfigPartitions[here.id] = new ConfigContext(
-      log_level,
-      vocab_hash_size,
-      initial_vocab_max_size,
-      min_count,
-      train_file,
-      save_vocab_file,
-      read_vocab_file,
-      output_file,
-      hs,
-      negative,
-      layer1_size,
-      iterations,
-      window,
-      cbow,
-      binary,
-      sample,
-      alpha,
-      classes
+      x_log_level,
+      x_vocab_hash_size,
+      x_initial_vocab_max_size,
+      x_min_count,
+      x_train_file,
+      x_save_vocab_file,
+      x_read_vocab_file,
+      x_output_file,
+      x_hs,
+      x_negative,
+      x_layer1_size,
+      x_iterations,
+      x_window,
+      x_cbow,
+      x_binary,
+      x_sample,
+      x_alpha,
+      x_classes
     );
   }
 }
