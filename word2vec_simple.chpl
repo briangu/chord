@@ -1,4 +1,4 @@
-use BlockDist, CyclicDist, BlockCycDist, ReplicatedDist, Time, Logging, Random;
+use Logging, Time;
 
 config const MAX_STRING = 100;
 config const EXP_TABLE_SIZE = 1000;
