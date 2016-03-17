@@ -11,7 +11,7 @@ if [ ! -e $VECTOR_DATA ]; then
 
   if [ ! -e $TEXT_DATA ]; then
     mkdir -p $DATA_DIR
-    # wget http://mattmahoney.net/dc/text8.zip -O $DATA_DIR/text8.zip
+    wget http://mattmahoney.net/dc/text8.zip -O $DATA_DIR/text8.zip
     unzip -d $DATA_DIR $DATA_DIR/text8.zip
   fi
   echo -----------------------------------------------------------------------------------------------------
