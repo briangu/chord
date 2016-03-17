@@ -20,14 +20,17 @@ Run demo-word.sh
     cd scripts
     ./demo-word.sh
 
-Note, if you want to pull a copy of original Google implementation, fetch the submodule:
+Note, if you want a copy of original Google implementation, fetch the submodule:
 
     git submodule init
     git submodule update
 
 
 
-
-References:
+References
+==========
 
 word2vec: https://code.google.com/p/word2vec/
+OSX friendly word2vec: https://github.com/dav/word2vec
+
+
