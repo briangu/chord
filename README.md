@@ -11,19 +11,19 @@ Install Chapel.  Note, all demo scripts expect a multi-node Chapel installation.
 
 For single node Chapel
 
-  brew install chapel
+    brew install chapel
 
 For multi-node Chapel, visit http://chapel.cray.com/download.html
 
 Run demo-word.sh
 
-  cd scripts
-  ./demo-word.sh
+    cd scripts
+    ./demo-word.sh
 
 Note, if you want to pull a copy of original Google implementation, fetch the submodule:
 
-  git submodule init
-  git submodule update
+    git submodule init
+    git submodule update
 
 
 
