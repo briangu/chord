@@ -18,7 +18,6 @@ config const read_vocab_file = "";
 config const output_file: string = "";
 config const hs = 0;
 config const negative = 5;
-config const layer1_size = 100;
 config const iterations = 5;
 config const window = 5;
 config const cbow = 1;
@@ -26,6 +25,7 @@ config const binary = 0;
 config const classes = 0;
 config var alpha = 0.025 * 2;
 config const sample = 1e-3;
+config const size = 100;
 
 const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
@@ -48,6 +48,7 @@ record VocabEntry {
   var node: VocabTreeNode;
 };
 
+const layer1_size = size;
 
 var vocab_size = 0;
 var vocabDomain = {0..#vocab_max_size};

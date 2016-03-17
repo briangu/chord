@@ -1,6 +1,33 @@
 # chord
-word2vec in Chapel
 
-time ./word2vec -train news.1000 -save_vocab vocab.t2.t -output vout -threads 1 -size 4 -binary 1
+Chord is a Chapel implementation of Google's word2vec.  The project contains
+both a 'lexical' port of the original word2vec code and a distributed variant
+which takes advantage of Chapel's locality features.
 
-time ./w2v -nl 1 --train_file news.1000 --read_vocab_file vocab.t2.t --output_file vectors.txt --layer1_size=4 --binary 1
+Setup
+=====
+
+Install Chapel.  Note, all demo scripts expect a multi-node Chapel installation.
+
+For single node Chapel
+
+  brew install chapel
+
+For multi-node Chapel, visit http://chapel.cray.com/download.html
+
+Run demo-word.sh
+
+  cd scripts
+  ./demo-word.sh
+
+Note, if you want to pull a copy of original Google implementation, fetch the submodule:
+
+  git submodule init
+  git submodule update
+
+
+
+
+References:
+
+word2vec: https://code.google.com/p/word2vec/
