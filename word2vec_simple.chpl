@@ -833,9 +833,7 @@ proc TrainModel() {
 
     for a in 0..#vocab_size do cl[a] = a % clcn;
     for a in 0..iterX {
-      /*for (b = 0; b < clcn * layer1_size; b++) cent[b] = 0;*/
-      for b in 0..#clcn * layer1_size do cent[b] = 0;
-      /*for (b = 0; b < clcn; b++) centcn[b] = 1;*/
+      for b in 0..#(clcn * layer1_size) do cent[b] = 0;
       for b in 0..#clcn do centcn[b] = 1;
       for c in 0..#vocab_size {
         for d in 0..#layer1_size do cent[layer1_size * cl[c] + d] += syn0[c * layer1_size + d];
@@ -865,7 +863,6 @@ proc TrainModel() {
       }
     }
     // Save the K-means classes
-    /*for a in 0..#vocab_size do writer.writef("%s %d\n", vocab[a].word, cl[a]);*/
     for a in 0..#vocab_size {
       var vw = vocab[a].word;
       for (j) in 0..#vw.len {
@@ -890,13 +887,6 @@ inline proc writeSpaceWord(word): int {
   word[3] = ascii('>');
   word[4] = 0;
   return 4;
-}
-
-inline proc timing(args ...?k) {
-  if (log_level >= 2) {
-    write(here.id, "\t");
-    writeln((...args));
-  }
 }
 
 inline proc wordToInt(word: [?] uint(8), len: int): int {
