@@ -1,4 +1,4 @@
-# chord
+# Chord
 
 Chord is a Chapel implementation of Google's word2vec.  The project contains
 both a 'lexical' port of the original word2vec code and a distributed variant
