@@ -24,6 +24,9 @@ config const iterations = 5;
 config const window = 5;
 config const cbow = 1;
 config const binary = 0;
+config const classes = 0;
+config const alpha = 0.025 * 2;
+config const sample = 1e-3;
 
 const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
@@ -75,10 +78,7 @@ var expTable: [0..#(EXP_TABLE_SIZE+1)] real;
 var train_words: int = 0;
 var word_count_actual = 0;
 var file_size = 0;
-var classes = 0;
-var alpha = 0.025 * 2;
 var starting_alpha: real;
-var sample = 1e-3;
 
 var table: [0..#table_size] int;
 var atCRLF = false;
@@ -586,6 +586,7 @@ proc TrainModelThread(tf: string, id: int) {
   var reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop, locking=false);
   var next_random: uint(64) = id:uint(64); //(randStreamSeeded.getNext() * 25214903917:uint(64) + 11):uint(64);
   var atEOF = false;
+  var alpha = starting_alpha;
 
   t.start();
   var start = t.elapsed(TimeUnits.microseconds);
@@ -843,36 +844,41 @@ proc TrainModel() {
       else for (b) in 0..#layer1_size do writer.write(syn0[a * layer1_size + b], " ");
       writer.writeln();
     }
-  }/* else {
+  } else {
     // Run K-means on the word vectors
-    int clcn = classes, iter = 10, closeid;
-    int *centcn = (int *)malloc(classes * sizeof(int));
-    int *cl = (int *)calloc(vocab_size, sizeof(int));
-    real closev, x;
-    real *cent = (real *)calloc(classes * layer1_size, sizeof(real));
-    for (a = 0; a < vocab_size; a++) cl[a] = a % clcn;
-    for (a = 0; a < iter; a++) {
-      for (b = 0; b < clcn * layer1_size; b++) cent[b] = 0;
-      for (b = 0; b < clcn; b++) centcn[b] = 1;
-      for (c = 0; c < vocab_size; c++) {
-        for (d = 0; d < layer1_size; d++) cent[layer1_size * cl[c] + d] += syn0[c * layer1_size + d];
-        centcn[cl[c]]++;
+    var clcn = classes;
+    var iterX = 10;
+    var closeid: int;
+    var centcn: [0..#classes] int;
+    var cl: [0..#vocab_size] int;
+    var closev, x: real;
+    var cent: [0..#classes*layer1_size] real;
+
+    for a in 0..#vocab_size do cl[a] = a % clcn;
+    for a in 0..iterX {
+      /*for (b = 0; b < clcn * layer1_size; b++) cent[b] = 0;*/
+      for b in 0..#clcn * layer1_size do cent[b] = 0;
+      /*for (b = 0; b < clcn; b++) centcn[b] = 1;*/
+      for b in 0..#clcn do centcn[b] = 1;
+      for c in 0..#vocab_size {
+        for d in 0..#layer1_size do cent[layer1_size * cl[c] + d] += syn0[c * layer1_size + d];
+        centcn[cl[c]] += 1;
       }
-      for (b = 0; b < clcn; b++) {
+      for b in 0..#clcn {
         closev = 0;
-        for (c = 0; c < layer1_size; c++) {
+        for c in 0..#layer1_size {
           cent[layer1_size * b + c] /= centcn[b];
           closev += cent[layer1_size * b + c] * cent[layer1_size * b + c];
         }
         closev = sqrt(closev);
-        for (c = 0; c < layer1_size; c++) cent[layer1_size * b + c] /= closev;
+        for c in 0..#layer1_size do cent[layer1_size * b + c] /= closev;
       }
-      for (c = 0; c < vocab_size; c++) {
+      for c in 0..#vocab_size {
         closev = -10;
         closeid = 0;
-        for (d = 0; d < clcn; d++) {
+        for d in 0..#clcn {
           x = 0;
-          for (b = 0; b < layer1_size; b++) x += cent[layer1_size * d + b] * syn0[c * layer1_size + b];
+          for b in 0..#layer1_size do x += cent[layer1_size * d + b] * syn0[c * layer1_size + b];
           if (x > closev) {
             closev = x;
             closeid = d;
@@ -882,12 +888,18 @@ proc TrainModel() {
       }
     }
     // Save the K-means classes
-    for (a = 0; a < vocab_size; a++) fprintf(fo, "%s %d\n", vocab[a].word, cl[a]);
-    free(centcn);
-    free(cent);
-    free(cl);
+    /*for a in 0..#vocab_size do writer.writef("%s %d\n", vocab[a].word, cl[a]);*/
+    for a in 0..#vocab_size {
+      var vw = vocab[a].word;
+      for (j) in 0..#vw.len {
+        writer.writef("%c", vw.word[j]);
+      }
+      writer.write(" ");
+      if (binary) then writer.writef("%|4i", cl[a]);
+      else writer.write(cl[a]);
+      writer.writeln();
+    }
   }
-  fclose(fo);*/
   writer.close();
   outputFile.close();
 }
