@@ -9,7 +9,7 @@ config const MAX_CODE_LENGTH = 40;
 config const log_level = 2;
 
 config const vocab_hash_size = 30000000;  // Maximum 30 * 0.7 = 21M words in the vocabulary
-config const initial_vocab_max_size = 1000;
+config var vocab_max_size = 1000;
 
 config const min_count = 5;
 config const train_file = "";
@@ -24,7 +24,7 @@ config const window = 5;
 config const cbow = 1;
 config const binary = 0;
 config const classes = 0;
-config const alpha = 0.025 * 2;
+config var alpha = 0.025 * 2;
 config const sample = 1e-3;
 
 const SPACE = ascii(' '): uint(8);
@@ -50,7 +50,6 @@ record VocabEntry {
 
 
 var vocab_size = 0;
-var vocab_max_size = initial_vocab_max_size;
 var vocabDomain = {0..#vocab_max_size};
 var vocab: [vocabDomain] VocabEntry;
 var vocab_hash: [0..#vocab_hash_size] int = -1;
@@ -584,7 +583,6 @@ proc TrainModelThread(tf: string, id: int) {
   var reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop, locking=false);
   var next_random: uint(64) = id:uint(64); //(randStreamSeeded.getNext() * 25214903917:uint(64) + 11):uint(64);
   var atEOF = false;
-  var alpha = starting_alpha;
 
   t.start();
   var start = t.elapsed(TimeUnits.microseconds);
