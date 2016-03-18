@@ -1,10 +1,10 @@
 use Logging, Time;
 
-config const MAX_STRING = 100;
-config const EXP_TABLE_SIZE = 1000;
-config const MAX_EXP = 6;
-config const MAX_SENTENCE_LENGTH = 1000;
-config const MAX_CODE_LENGTH = 40;
+const MAX_STRING = 100;
+const EXP_TABLE_SIZE = 1000;
+const MAX_EXP = 6;
+const MAX_SENTENCE_LENGTH = 1000;
+const MAX_CODE_LENGTH = 40;
 
 config const log_level = 2;
 
@@ -31,6 +31,8 @@ const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
 const CRLF = ascii('\n'): uint(8);
 
+const layer1_size = size;
+
 class VocabWord {
   var len: int = MAX_STRING;
   var word: [0..#len] uint(8);
@@ -47,8 +49,6 @@ record VocabEntry {
   var cn: int(64);
   var node: VocabTreeNode;
 };
-
-const layer1_size = size;
 
 var vocab_size = 0;
 var vocabDomain = {0..#vocab_max_size};
@@ -74,7 +74,6 @@ var expTable: [0..#(EXP_TABLE_SIZE+1)] real;
 
 var train_words: int = 0;
 var word_count_actual = 0;
-var file_size = 0;
 var starting_alpha: real;
 var min_reduce = 1;
 
@@ -215,7 +214,7 @@ private inline proc chpl_sort_cmp(a, b, param reverse=false, param eq=false) {
   }
 }
 
-proc XInsertionSort(Data: [?Dom] VocabEntry, doublecheck=false, param reverse=false) where Dom.rank == 1 {
+proc InsertionSort(Data: [?Dom] VocabEntry, doublecheck=false, param reverse=false) where Dom.rank == 1 {
   const lo = Dom.low;
   for i in Dom {
     const ithVal = Data(i);
@@ -243,7 +242,7 @@ proc QuickSort(Data: [?Dom] VocabEntry, minlen=7, doublecheck=false, param rever
 
   // base case -- use insertion sort
   if (hi - lo < minlen) {
-    XInsertionSort(Data, reverse=reverse);
+    InsertionSort(Data, reverse=reverse);
     return;
   }
 
@@ -467,8 +466,6 @@ proc LearnVocabFromTrainFile() {
     info("Words in train file: ", train_words);
   }
 
-  /*file_size = ftell(fin);*/
-
   r.close();
   f.close();
 }
@@ -524,13 +521,13 @@ proc ReadVocab() {
   r.close();
   f.close();
 
-  /*SortVocab();*/
+  // NOTE: we don't SortVocab here because the vocab is already sorted when read
+
   if (log_level > 0) {
     writeln("Vocab size: ", vocab_size);
     writeln("Words in train file: ", train_words);
   }
 
-  /*file_size = ftell(fin);*/
   for (a) in 0..#vocab_size {
     vocab[a].node = new VocabTreeNode();
   }
@@ -549,7 +546,6 @@ proc InitNet() {
     syn1neg = 0;
   }
 
-  /*randStreamSeeded.fillRandom(syn0);*/
   var next_random: uint(64) = 1;
   for (a) in 0..#vocab_size {
     for (b) in 0..#layer1_size {
@@ -582,7 +578,7 @@ proc TrainModelThread(tf: string, id: int) {
   var seekStart = fileChunkSize * id;
   var seekStop = fileChunkSize * (id + 1);
   var reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop, locking=false);
-  var next_random: uint(64) = id:uint(64); //(randStreamSeeded.getNext() * 25214903917:uint(64) + 11):uint(64);
+  var next_random: uint(64) = id:uint(64);
   var atEOF = false;
 
   t.start();
@@ -781,7 +777,6 @@ proc TrainModelThread(tf: string, id: int) {
   t.stop();
   reader.close();
   trainFile.close();
-  /*writeln();*/
 }
 
 proc TrainModel() {
@@ -796,13 +791,7 @@ proc TrainModel() {
   InitNet();
   if (negative > 0) then InitUnigramTable();
 
-  /*forall loc in Locales {
-    on loc {
-      var tf = train_file;
-      TrainModelThread(tf);
-    }
-  }*/
-
+  // run on a single locale using all threads available
   forall i in 0..#here.maxTaskPar {
     TrainModelThread(train_file, i);
   }
