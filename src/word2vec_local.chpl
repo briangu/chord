@@ -1,3 +1,6 @@
+// The following is a "lexical" translation of the classic word2vec
+// As this is a baseline for creating a distributed version of word2vec in Chapel,
+// this translation biases towards lexical equivalence versus performance.
 use Logging, Time;
 
 const MAX_STRING = 100;
@@ -6,11 +9,10 @@ const MAX_EXP = 6;
 const MAX_SENTENCE_LENGTH = 1000;
 const MAX_CODE_LENGTH = 40;
 
-config const log_level = 2;
+const vocab_hash_size = 30000000;  // Maximum 30 * 0.7 = 21M words in the vocabulary
 
-config const vocab_hash_size = 30000000;  // Maximum 30 * 0.7 = 21M words in the vocabulary
+// Command line arguments
 config var vocab_max_size = 1000;
-
 config const min_count = 5;
 config const train_file = "";
 config const save_vocab_file = "";
@@ -26,12 +28,16 @@ config const classes = 0;
 config var alpha = 0.025 * 2;
 config const sample = 1e-3;
 config const size = 100;
+config const debug_mode = 2;
 
 const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
 const CRLF = ascii('\n'): uint(8);
 
 const layer1_size = size;
+const LayerSpace = {0..#layer1_size};
+
+const num_threads = here.maxTaskPar;
 
 class VocabWord {
   var len: int = MAX_STRING;
@@ -57,38 +63,30 @@ var vocab_hash: [0..#vocab_hash_size] int = -1;
 
 var syn0Domain = {0..#vocab_size*layer1_size};
 var syn0: [syn0Domain] real;
-
 var syn1Domain = {0..#1};
 var syn1: [syn1Domain] real;
-
 var syn1negDomain = {0..#1};
 var syn1neg: [syn1negDomain] real;
 
-var table_size: int = 1e8:int;
-
 var expTable: [0..#(EXP_TABLE_SIZE+1)] real;
-/*for (i) in 0..#EXP_TABLE_SIZE {
-  expTable[i] = exp((i / EXP_TABLE_SIZE:real * 2 - 1) * MAX_EXP); // Precompute the exp() table
-  expTable[i] = expTable[i] / (expTable[i] + 1);                   // Precompute f(x) = x / (x + 1)
-}*/
+var table_size: int = 1e8:int;
+var table: [0..#table_size] int;
 
 var train_words: int = 0;
 var word_count_actual = 0;
 var starting_alpha: real;
 var min_reduce = 1;
 
-var table: [0..#table_size] int;
 var atCRLF = false;
 
 proc InitUnigramTable() {
   var a, i: int;
-  var train_words_pow: real = 0;
-  var d1: real;
+  var d1, train_words_pow: real;
   var power: real = 0.75;
-  for (a) in 0..#vocab_size do train_words_pow += vocab[a].cn ** power;
+  for a in 0..#vocab_size do train_words_pow += vocab[a].cn ** power;
   i = 0;
   d1 = (vocab[i].cn ** power) / train_words_pow;
-  for (a) in 0..#table_size {
+  for a in 0..#table_size {
     table[a] = i;
     if (a / table_size:real > d1) {
       i += 1;
@@ -103,21 +101,20 @@ inline proc readNextChar(ref ch: uint(8), reader): bool {
     atCRLF = false;
     ch = CRLF;
     return true;
-  } else {
-    return reader.read(ch);
   }
+  return reader.read(ch);
 }
 
 proc ReadWord(word: [?] uint(8), reader): int {
-  var a: int = 0;
+  var a: int;
   var ch: uint(8);
 
   while readNextChar(ch, reader) {
     if (ch == 13) then continue;
     if ((ch == SPACE) || (ch == TAB) || (ch == CRLF)) {
       if (a > 0) {
-        // TODO: write reader with ungetc
-        if (ch == CRLF) then atCRLF = true; //ungetc
+        // Readers do not have ungetc, so Simulate ungetc using the atCRLF flag
+        if (ch == CRLF) then atCRLF = true;
         break;
       }
       if (ch == CRLF) then return writeSpaceWord(word);
@@ -137,9 +134,7 @@ inline proc GetWordHash(word: VocabWord): int {
 
 inline proc GetWordHash(word: [?] uint(8), len: int): int {
   var hash: uint = 0;
-  for (ch) in 0..#len {
-    hash = hash * 257 + word[ch]: uint;
-  }
+  for ch in 0..#len do hash = hash * 257 + word[ch]: uint;
   hash = hash % vocab_hash_size: uint;
   return hash: int;
 }
@@ -151,13 +146,9 @@ proc SearchVocab(word: [?D] uint(8), len: int): int {
   while (1) {
     if (vocab_hash[hash] == -1) then return -1;
     var vw = vocab[vocab_hash[hash]].word;
-    /* SLOW!
-      if (len == vw.len && word[0..#len].equals(vw.word[0..#len])) {
-      return vocab_hash[hash];
-    }*/
     if (len == vw.len) {
       var found = true;
-      for (i) in 0..#len {
+      for i in 0..#len {
         if (word[i] != vw.word[i]) {
           found = false;
           break;
@@ -172,30 +163,26 @@ proc SearchVocab(word: [?D] uint(8), len: int): int {
 }
 
 proc ReadWordIndex(reader): int {
-  var word: [0..MAX_STRING] uint(8);
+  var word: [0..#MAX_STRING] uint(8);
   var len = ReadWord(word, reader);
   if (len == 0) then return -2;
   return SearchVocab(word, len);
 }
 
 // Adds a word to the vocabulary
-proc AddWordToVocab(word: [?D] uint(8), len: int): int {
+proc AddWordToVocab(word: [?D] uint(8), length: int): int {
+  var len = if (length > MAX_STRING) then MAX_STRING else length;
   var vw = new VocabWord(len);
-  /*vw.word = word[0..#len];*/
-  for (i) in 0..#len {
-    vw.word[i] = word[i];
-  }
+  for i in 0..#len do vw.word[i] = word[i];
   vocab[vocab_size].word = vw;
   vocab[vocab_size].cn = 0;
-
   vocab_size += 1;
-
   // Reallocate memory if needed
   if (vocab_size + 2 >= vocab_max_size) {
+    // TODO: research if the original += 1000 is adequate performance-wise
     vocab_max_size *= 2;
     vocabDomain = {0..#vocab_max_size};
   }
-
   var hash = GetWordHash(word, len);
   while (vocab_hash[hash] != -1) {
     hash = (hash + 1) % vocab_hash_size;
@@ -275,49 +262,35 @@ proc QuickSort(Data: [?Dom] VocabEntry, minlen=7, doublecheck=false, param rever
 }
 
 proc SortVocab() {
-  var a: int;
-  var size: int;
-  var hash: int;
+  var a, size, hash: int;
 
   // Sort the vocabulary and keep </s> at the first position
   QuickSort(vocab[1..], vocab_size - 1, reverse=true);
-
-  vocab_hash = -1;
-
+  for a in 0..#vocab_hash_size do vocab_hash[a] = -1;
   size = vocab_size;
   train_words = 0;
-
-  for (a) in 0..#size {
+  for a in 0..#size {
     // Words occuring less than min_count times will be discarded from the vocab
     if ((vocab[a].cn < min_count) && (a != 0)) {
       vocab_size -= 1;
-
-      if (vocab[a].word != nil) then delete vocab[a].word;
-      if (vocab[a].node != nil) then delete vocab[a].node;
-      vocab[a].word = nil;
-      vocab[a].cn = 0;
+      delete vocab[a].word;
+      /*vocab[a].word = nil;
+      vocab[a].cn = 0;*/
     } else {
       // Hash will be re-computed, as after the sorting it is not actual
       hash = GetWordHash(vocab[a].word);
-      while (vocab_hash[hash] != -1) {
-        hash = (hash + 1) % vocab_hash_size;
-      }
+      while (vocab_hash[hash] != -1) do hash = (hash + 1) % vocab_hash_size;
       vocab_hash[hash] = a;
       train_words += vocab[a].cn;
     }
   }
-
   vocabDomain = {0..#(vocab_size + 1)};
-
   // Allocate memory for the binary tree construction
-  for (a) in 0..#vocab_size {
-    vocab[a].node = new VocabTreeNode();
-  }
+  for a in 0..#vocab_size do vocab[a].node = new VocabTreeNode();
 }
 
 proc ReduceVocab() {
-  var a: int;
-  var b: int = 0;
+  var a, b: int;
   for a in 0..#vocab_size do if (vocab[a].cn > min_reduce) {
     vocab[b].cn = vocab[a].cn;
     vocab[b].word = vocab[a].word;
@@ -330,40 +303,26 @@ proc ReduceVocab() {
   for a in 0..#vocab_size {
     // Hash will be re-computed, as it is not actual
     var hash = GetWordHash(vocab[a].word);
-    while (vocab_hash[hash] != -1) {
-      hash = (hash + 1) % vocab_hash_size;
-    }
+    while (vocab_hash[hash] != -1) do hash = (hash + 1) % vocab_hash_size;
     vocab_hash[hash] = a;
   }
   min_reduce += 1;
 }
 
 proc CreateBinaryTree() {
-  var b: int(64);
-  var i: int(64);
-  var min1i: int(64);
-  var min2i: int(64);
-  var pos1: int(64);
-  var pos2: int(64);
+  var b, i, min1i, min2i, pos1, pos2: int(64);
   var point: [0..#MAX_CODE_LENGTH] int(64);
   var code: [0..#MAX_CODE_LENGTH] uint(8);
   var dom = {0..#(vocab_size*2 + 1)};
   var count: [dom] int(64);
   var binary: [dom] int(64);
   var parent_node: [dom] int(64);
-
   count = 1e15: int(64);
-  for (a) in 0..#vocab_size {
-    count[a] = vocab[a].cn;
-  }
-
-  /*writeln(count[0], " ", count[vocab_size]);
-*/
+  for a in 0..#vocab_size do count[a] = vocab[a].cn;
   pos1 = vocab_size - 1;
   pos2 = vocab_size;
-
   // Following algorithm constructs the Huffman tree by adding one node at a time
-  for (a) in 0..#(vocab_size-1) {
+  for a in 0..#(vocab_size-1) {
     // First, find two smallest nodes 'min1, min2'
     if (pos1 >= 0) {
       if (count[pos1] < count[pos2]) {
@@ -395,7 +354,7 @@ proc CreateBinaryTree() {
     binary[min2i] = 1;
   }
   // Now assign binary code to each vocabulary word
-  for (a) in 0..#vocab_size {
+  for a in 0..#vocab_size {
     b = a;
     i = 0;
     while (1) {
@@ -407,13 +366,10 @@ proc CreateBinaryTree() {
     }
     vocab[a].node.codelen = i: uint(8);
     vocab[a].node.point[0] = vocab_size - 2;
-    /*write(vocab[a].node.codelen, " ", vocab[a].node.point[0]);*/
-    for (b) in 0..#i {
+    for b in 0..#i {
       vocab[a].node.code[i - b - 1] = code[b];
       vocab[a].node.point[i - b] = point[b] - vocab_size;
-      /*write(" ", vocab[a].node.code[i - b - 1], " ", vocab[a].node.point[i - b]);*/
     }
-    /*writeln();*/
   }
 }
 
@@ -421,32 +377,24 @@ proc LearnVocabFromTrainFile() {
   var word: [0..#MAX_STRING] uint(8);
   var i: int(64);
   var len: int;
-
-  vocab_hash = -1;
-
+  for a in 0..#vocab_hash_size do vocab_hash[a] = -1;
   var f = open(train_file, iomode.r);
   /*if (fin == NULL) {
     printf("ERROR: training data file not found!\n");
     exit(1);
   }*/
   var r = f.reader(kind=ionative, locking=false);
-
   vocab_size = 0;
-
   writeSpaceWord(word);
   AddWordToVocab(word, 4);
-
   while (1) {
     len = ReadWord(word, r);
     if (len == 0) then break;
-
     train_words += 1;
-
-    if (log_level > 0 && (train_words % 100000 == 0)) {
+    if (debug_mode > 0 && (train_words % 100000 == 0)) {
       write(train_words / 1000, "K\r");
       stdout.flush();
     }
-
     i = SearchVocab(word, len);
     if (i == -1) {
       var a = AddWordToVocab(word, len);
@@ -454,18 +402,13 @@ proc LearnVocabFromTrainFile() {
     } else {
       vocab[i].cn += 1;
     }
-    if (vocab_size > vocab_hash_size * 0.7) {
-      ReduceVocab();
-    }
+    if (vocab_size > vocab_hash_size * 0.7) then ReduceVocab();
   }
-
   SortVocab();
-
-  if (log_level > 0) {
+  if (debug_mode > 0) {
     info("Vocab size: ", vocab_size);
     info("Words in train file: ", train_words);
   }
-
   r.close();
   f.close();
 }
@@ -473,12 +416,9 @@ proc LearnVocabFromTrainFile() {
 proc SaveVocab() {
   var f = open(save_vocab_file, iomode.cw);
   var w = f.writer(locking=false);
-  for (i) in 0..#vocab_size {
+  for i in 0..#vocab_size {
     var vw = vocab[i].word;
-    /* parallelizes output! [j in 0..#vw.len] w.writef("%c", vw.word[j]);*/
-    for (j) in 0..#vw.len {
-      w.writef("%c", vw.word[j]);
-    }
+    for j in 0..#vw.len do w.writef("%c", vw.word[j]);
     w.writeln(" ", vocab[i].cn);
   }
   w.close();
@@ -489,7 +429,6 @@ proc ReadVocab() {
   var a: int(64);
   var cn: int;
   var c: uint(8);
-  var len: int;
   var word: [0..#MAX_STRING] uint(8);
 
   var f = open(read_vocab_file, iomode.r);
@@ -504,16 +443,14 @@ proc ReadVocab() {
   train_words = 0;
 
   while (1) {
-    len = ReadWord(word, r);
+    var len = ReadWord(word, r);
     if (len == 0) then break;
     a = AddWordToVocab(word, len);
-
     // read and compute word count
     len = ReadWord(word, r);
     if (len == 0) then break;
     vocab[a].cn = wordToInt(word, len);
     train_words += vocab[a].cn;
-
     // skip CRLF
     ReadWord(word, r);
   }
@@ -522,64 +459,46 @@ proc ReadVocab() {
   f.close();
 
   // NOTE: we don't SortVocab here because the vocab is already sorted when read
-
-  if (log_level > 0) {
+  if (debug_mode > 0) {
     writeln("Vocab size: ", vocab_size);
     writeln("Words in train file: ", train_words);
   }
-
-  for (a) in 0..#vocab_size {
-    vocab[a].node = new VocabTreeNode();
-  }
+  for a in 0..#vocab_size do vocab[a].node = new VocabTreeNode();
 }
 
 proc InitNet() {
   syn0Domain = {0..#vocab_size*layer1_size};
-
-  if (hs) {
-    syn1Domain = syn0Domain;
-    syn1 = 0;
-  }
-
-  if (negative > 0) {
-    syn1negDomain = syn0Domain;
-    syn1neg = 0;
-  }
-
+  if (hs) then syn1Domain = syn0Domain;
+  if (negative > 0) then syn1negDomain = syn0Domain;
   var next_random: uint(64) = 1;
-  for (a) in 0..#vocab_size {
-    for (b) in 0..#layer1_size {
+  for a in 0..#vocab_size {
+    for b in LayerSpace {
       next_random = next_random * 25214903917:uint(64) + 11;
       syn0[a * layer1_size + b] = (((next_random & 0xFFFF) / 65536:real) - 0.5) / layer1_size;
     }
   }
-
   CreateBinaryTree();
 }
 
 proc TrainModelThread(tf: string, id: int) {
-  var a, d, cw, word, last_word, l1, l2, c, target, labelx: int;
-  var b: int(64);
-  var sentence_length = 0;
-  var sentence_position = 0;
-  var word_count = 0;
-  var last_word_count = 0;
+  var a, b, d, cw, word, last_word, sentence_length, sentence_position: int(64);
+  var word_count, last_word_count: int(64);
   var sen: [0..#(MAX_SENTENCE_LENGTH + 1)] int;
+  var l1, l2, c, target, labelx: int(64);
   var local_iter = iterations;
+  var next_random: uint(64) = id:uint(64);
   var f, g: real;
   var t: Timer;
+  var atEOF = false;
 
-  var neuDomain = {0..#layer1_size};
-  var neu1: [neuDomain] real = 0.0;
-  var neu1e: [neuDomain] real = 0.0;
+  var neu1: [LayerSpace] real;
+  var neu1e: [LayerSpace] real;
 
   var trainFile = open(tf, iomode.r);
-  var fileChunkSize = trainFile.length() / here.maxTaskPar;
+  var fileChunkSize = trainFile.length() / num_threads;
   var seekStart = fileChunkSize * id;
   var seekStop = fileChunkSize * (id + 1);
   var reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop, locking=false);
-  var next_random: uint(64) = id:uint(64);
-  var atEOF = false;
 
   t.start();
   var start = t.elapsed(TimeUnits.microseconds);
@@ -588,7 +507,7 @@ proc TrainModelThread(tf: string, id: int) {
     if (word_count - last_word_count > 10000) {
       word_count_actual += word_count - last_word_count;
       last_word_count = word_count;
-      if (log_level > 1) {
+      if (debug_mode > 1) {
         var now = t.elapsed(TimeUnits.milliseconds);
         writef("\rAlpha: %r  Progress: %0.2r%%  Words/thread/sec: %rk  ",
               alpha,
@@ -621,7 +540,7 @@ proc TrainModelThread(tf: string, id: int) {
       }
       sentence_position = 0;
     }
-    if (atEOF || (word_count > train_words / Locales.size)) {
+    if (atEOF || (word_count > train_words / num_threads)) {
       word_count_actual += word_count - last_word_count;
       local_iter -= 1;
       if (local_iter == 0) then break;
@@ -635,7 +554,7 @@ proc TrainModelThread(tf: string, id: int) {
     }
     word = sen[sentence_position];
     if (word == -1) then continue;
-    for (c) in 0..#layer1_size {
+    for c in LayerSpace {
       neu1[c] = 0;
       neu1e[c] = 0;
     }
@@ -644,128 +563,111 @@ proc TrainModelThread(tf: string, id: int) {
     if (cbow) {  //train the cbow architecture
       // in -> hidden
       cw = 0;
-      for (a) in b..(window * 2 - b) {
-        if (a != window) {
+      for a in b..(window * 2 - b) do if (a != window) {
+        c = sentence_position - window + a;
+        if (c < 0) then continue;
+        if (c >= sentence_length) then continue;
+        last_word = sen[c];
+        if (last_word == -1) then continue;
+        for c in LayerSpace do neu1[c] += syn0[c + last_word * layer1_size];
+        cw += 1;
+      }
+      if (cw) {
+        for c in LayerSpace do neu1[c] /= cw;
+        if (hs) then for d in 0..#vocab[word].node.codelen {
+          f = 0;
+          l2 = vocab[word].node.point[d] * layer1_size;
+          // Propagate hidden -> output
+          for c in LayerSpace do f += neu1[c] * syn1[c + l2];
+          if (f <= -MAX_EXP) then continue;
+          else if (f >= MAX_EXP) then continue;
+          else f = expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int];
+          // 'g' is the gradient multiplied by the learning rate
+          g = (1 - vocab[word].node.code[d] - f) * alpha;
+          // Propagate errors output -> hidden
+          for c in LayerSpace do neu1e[c] += g * syn1[c + l2];
+          // Learn weights hidden -> output
+          for c in LayerSpace do syn1[c + l2] += g * neu1[c];
+        }
+        // NEGATIVE SAMPLING
+        if (negative > 0) then for d in 0..#(negative + 1) {
+          if (d == 0) {
+            target = word;
+            labelx = 1;
+          } else {
+            next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
+            target = table[((next_random >> 16) % table_size:uint(64)):int];
+            if (target == 0) then target = (next_random % (vocab_size - 1):uint(64) + 1):int;
+            if (target == word) then continue;
+            labelx = 0;
+          }
+          l2 = target * layer1_size;
+          f = 0;
+          for c in LayerSpace do f += neu1[c] * syn1neg[c + l2];
+          if (f > MAX_EXP) then g = (labelx - 1) * alpha;
+          else if (f < -MAX_EXP) then g = (labelx - 0) * alpha;
+          else g = (labelx - expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int]) * alpha;
+          for c in LayerSpace do neu1e[c] += g * syn1neg[c + l2];
+          for c in LayerSpace do syn1neg[c + l2] += g * neu1[c];
+        }
+        // hidden -> in
+        for a in b..(window * 2 - b) do if (a != window) {
           c = sentence_position - window + a;
           if (c < 0) then continue;
           if (c >= sentence_length) then continue;
           last_word = sen[c];
           if (last_word == -1) then continue;
-          for (c) in 0..#layer1_size do neu1[c] += syn0[c + last_word * layer1_size];
-          cw += 1;
-        }
-      }
-      if (cw) {
-        for (c) in 0..#layer1_size do neu1[c] /= cw;
-        if (hs) {
-           for (d) in 0..#vocab[word].node.codelen {
-            f = 0;
-            l2 = vocab[word].node.point[d] * layer1_size;
-            // Propagate hidden -> output
-            for (c) in 0..#layer1_size do f += neu1[c] * syn1[c + l2];
-            if (f <= -MAX_EXP) then continue;
-            else if (f >= MAX_EXP) then continue;
-            else {
-              var idx = floor((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int;
-              f = expTable[idx];
-            }
-            // 'g' is the gradient multiplied by the learning rate
-            g = (1 - vocab[word].node.code[d] - f) * alpha;
-            // Propagate errors output -> hidden
-            for (c) in 0..#layer1_size do neu1e[c] += g * syn1[c + l2];
-            // Learn weights hidden -> output
-            for (c) in 0..#layer1_size do syn1[c + l2] += g * neu1[c];
-          }
-        }
-        // NEGATIVE SAMPLING
-        if (negative > 0) {
-          for (d) in 0..#(negative + 1) {
-            if (d == 0) {
-              target = word;
-              labelx = 1;
-            } else {
-              next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
-              target = table[((next_random >> 16) % table_size:uint(64)):int];
-              if (target == 0) then target = (next_random % (vocab_size - 1):uint(64) + 1):int;
-              if (target == word) then continue;
-              labelx = 0;
-            }
-            l2 = target * layer1_size;
-            f = 0;
-            for (c) in 0..#layer1_size do f += neu1[c] * syn1neg[c + l2];
-            if (f > MAX_EXP) then g = (labelx - 1) * alpha;
-            else if (f < -MAX_EXP) then g = (labelx - 0) * alpha;
-            else g = (labelx - expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int]) * alpha;
-            for (c) in 0..#layer1_size do neu1e[c] += g * syn1neg[c + l2];
-            for (c) in 0..#layer1_size do syn1neg[c + l2] += g * neu1[c];
-          }
-        }
-        // hidden -> in
-        for (a) in b..(window * 2 - b) {
-          if (a != window) {
-            c = sentence_position - window + a;
-            if (c < 0) then continue;
-            if (c >= sentence_length) then continue;
-            last_word = sen[c];
-            if (last_word == -1) then continue;
-            for (c) in 0..#layer1_size do syn0[c + last_word * layer1_size] += neu1e[c];
-          }
+          for c in LayerSpace do syn0[c + last_word * layer1_size] += neu1e[c];
         }
       }
     } else {  //train skip-gram
-      for (a) in b..(window * 2 - b) {
-        if (a != window) {
-          c = sentence_position - window + a;
-          if (c < 0) then continue;
-          if (c >= sentence_length) then continue;
-          last_word = sen[c];
-          if (last_word == -1) then continue;
-          l1 = last_word * layer1_size;
-          for (c) in 0..#layer1_size do neu1e[c] = 0;
-          // HIERARCHICAL SOFTMAX
-          if (hs) {
-            for d in 0..#vocab[word].node.codelen {
-              f = 0;
-              l2 = vocab[word].node.point[d] * layer1_size;
-              // Propagate hidden -> output
-              for (c) in 0..#layer1_size do f += syn0[c + l1] * syn1[c + l2];
-              if (f <= -MAX_EXP) then continue;
-              else if (f >= MAX_EXP) then continue;
-              else f = expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int];
-              // 'g' is the gradient multiplied by the learning rate
-              g = (1 - vocab[word].node.code[d] - f) * alpha;
-              // Propagate errors output -> hidden
-              for (c) in 0..#layer1_size do neu1e[c] += g * syn1[c + l2];
-              // Learn weights hidden -> output
-              for (c) in 0..#layer1_size do syn1[c + l2] += g * syn0[c + l1];
-            }
-          }
-          // NEGATIVE SAMPLING
-          if (negative > 0) {
-            for d in 0..#negative {
-              if (d == 0) {
-                target = word;
-                labelx = 1;
-              } else {
-                next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
-                target = table[((next_random >> 16) % table_size:uint(64)):int];
-                if (target == 0) then target = (next_random % (vocab_size - 1):uint(64) + 1):int;
-                if (target == word) then continue;
-                labelx = 0;
-              }
-              l2 = target * layer1_size;
-              f = 0;
-              for (c) in 0..#layer1_size do f += syn0[c + l1] * syn1neg[c + l2];
-              if (f > MAX_EXP) then g = (labelx - 1) * alpha;
-              else if (f < -MAX_EXP) then g = (labelx - 0) * alpha;
-              else g = (labelx - expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int]) * alpha;
-              for (c) in 0..#layer1_size do neu1e[c] += g * syn1neg[c + l2];
-              for (c) in 0..#layer1_size do syn1neg[c + l2] += g * syn0[c + l1];
-            }
-          }
-          // Learn weights input -> hidden
-          for (c) in 0..#layer1_size do syn0[c + l1] += neu1e[c];
+      for a in b..(window * 2 - b) do if (a != window) {
+        c = sentence_position - window + a;
+        if (c < 0) then continue;
+        if (c >= sentence_length) then continue;
+        last_word = sen[c];
+        if (last_word == -1) then continue;
+        l1 = last_word * layer1_size;
+        for c in LayerSpace do neu1e[c] = 0;
+        // HIERARCHICAL SOFTMAX
+        if (hs) then for d in 0..#vocab[word].node.codelen {
+          f = 0;
+          l2 = vocab[word].node.point[d] * layer1_size;
+          // Propagate hidden -> output
+          for c in LayerSpace do f += syn0[c + l1] * syn1[c + l2];
+          if (f <= -MAX_EXP) then continue;
+          else if (f >= MAX_EXP) then continue;
+          else f = expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int];
+          // 'g' is the gradient multiplied by the learning rate
+          g = (1 - vocab[word].node.code[d] - f) * alpha;
+          // Propagate errors output -> hidden
+          for c in LayerSpace do neu1e[c] += g * syn1[c + l2];
+          // Learn weights hidden -> output
+          for c in LayerSpace do syn1[c + l2] += g * syn0[c + l1];
         }
+        // NEGATIVE SAMPLING
+        if (negative > 0) then for d in 0..#negative {
+          if (d == 0) {
+            target = word;
+            labelx = 1;
+          } else {
+            next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
+            target = table[((next_random >> 16) % table_size:uint(64)):int];
+            if (target == 0) then target = (next_random % (vocab_size - 1):uint(64) + 1):int;
+            if (target == word) then continue;
+            labelx = 0;
+          }
+          l2 = target * layer1_size;
+          f = 0;
+          for c in LayerSpace do f += syn0[c + l1] * syn1neg[c + l2];
+          if (f > MAX_EXP) then g = (labelx - 1) * alpha;
+          else if (f < -MAX_EXP) then g = (labelx - 0) * alpha;
+          else g = (labelx - expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int]) * alpha;
+          for c in LayerSpace do neu1e[c] += g * syn1neg[c + l2];
+          for c in LayerSpace do syn1neg[c + l2] += g * syn0[c + l1];
+        }
+        // Learn weights input -> hidden
+        for c in LayerSpace do syn0[c + l1] += neu1e[c];
       }
     }
     sentence_position += 1;
@@ -792,7 +694,7 @@ proc TrainModel() {
   if (negative > 0) then InitUnigramTable();
 
   // run on a single locale using all threads available
-  forall i in 0..#here.maxTaskPar {
+  forall i in 0..#num_threads {
     TrainModelThread(train_file, i);
   }
 
@@ -801,14 +703,14 @@ proc TrainModel() {
   if (classes == 0) {
     // Save the word vectors
     writer.writeln(vocab_size, " ", layer1_size);
-    for (a) in 0..#vocab_size {
+    for a in 0..#vocab_size {
       var vw = vocab[a].word;
-      for (j) in 0..#vw.len {
+      for j in 0..#vw.len {
         writer.writef("%c", vw.word[j]);
       }
       writer.write(" ");
-      if (binary) then for (b) in 0..#layer1_size do writer.writef("%|4r", syn0[a * layer1_size + b]);
-      else for (b) in 0..#layer1_size do writer.write(syn0[a * layer1_size + b], " ");
+      if (binary) then for b in LayerSpace do writer.writef("%|4r", syn0[a * layer1_size + b]);
+      else for b in LayerSpace do writer.write(syn0[a * layer1_size + b], " ");
       writer.writeln();
     }
   } else {
@@ -826,24 +728,24 @@ proc TrainModel() {
       for b in 0..#(clcn * layer1_size) do cent[b] = 0;
       for b in 0..#clcn do centcn[b] = 1;
       for c in 0..#vocab_size {
-        for d in 0..#layer1_size do cent[layer1_size * cl[c] + d] += syn0[c * layer1_size + d];
+        for d in LayerSpace do cent[layer1_size * cl[c] + d] += syn0[c * layer1_size + d];
         centcn[cl[c]] += 1;
       }
       for b in 0..#clcn {
         closev = 0;
-        for c in 0..#layer1_size {
+        for c in LayerSpace {
           cent[layer1_size * b + c] /= centcn[b];
           closev += cent[layer1_size * b + c] * cent[layer1_size * b + c];
         }
         closev = sqrt(closev);
-        for c in 0..#layer1_size do cent[layer1_size * b + c] /= closev;
+        for c in LayerSpace do cent[layer1_size * b + c] /= closev;
       }
       for c in 0..#vocab_size {
         closev = -10;
         closeid = 0;
         for d in 0..#clcn {
           x = 0;
-          for b in 0..#layer1_size do x += cent[layer1_size * d + b] * syn0[c * layer1_size + b];
+          for b in LayerSpace do x += cent[layer1_size * d + b] * syn0[c * layer1_size + b];
           if (x > closev) {
             closev = x;
             closeid = d;
@@ -855,9 +757,7 @@ proc TrainModel() {
     // Save the K-means classes
     for a in 0..#vocab_size {
       var vw = vocab[a].word;
-      for (j) in 0..#vw.len {
-        writer.writef("%c", vw.word[j]);
-      }
+      for j in 0..#vw.len do writer.writef("%c", vw.word[j]);
       writer.write(" ");
       if (binary) then writer.writef("%|4i", cl[a]);
       else writer.write(cl[a]);
@@ -882,15 +782,17 @@ inline proc writeSpaceWord(word): int {
 inline proc wordToInt(word: [?] uint(8), len: int): int {
   var cn = 0;
   var x = 1;
-  for (i) in 0..#len by -1 {
+  for i in 0..#len by -1 {
     cn += x * (word[i] - 48);
     x *= 10;
   }
   return cn;
 }
 
-for (i) in 0..#EXP_TABLE_SIZE {
-  expTable[i] = exp((i / EXP_TABLE_SIZE:real * 2 - 1) * MAX_EXP); // Precompute the exp() table
-  expTable[i] = expTable[i] / (expTable[i] + 1);                   // Precompute f(x) = x / (x + 1)
+proc main() {
+  for i in 0..#EXP_TABLE_SIZE {
+    expTable[i] = exp((i / EXP_TABLE_SIZE:real * 2 - 1) * MAX_EXP); // Precompute the exp() table
+    expTable[i] = expTable[i] / (expTable[i] + 1);                   // Precompute f(x) = x / (x + 1)
+  }
+  TrainModel();
 }
-TrainModel();

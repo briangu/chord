@@ -1,7 +1,7 @@
 CC=clang
 CFLAGS=-I$(IDIR) -I.
 
-all: bin nettest 
+all: bin word2vec_local
 
 bin:
 	mkdir -p bin

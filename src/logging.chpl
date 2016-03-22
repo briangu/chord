@@ -1,9 +1,9 @@
 module Logging {
 
-  config const log_level = 1;
+  config const debug_mode = 2;
 
   inline proc debug(args ...?k) {
-    if (log_level >= 5) {
+    if (debug_mode >= 5) {
       write(here.id, "\t");
       writeln((...args));
       stdout.flush();
@@ -11,7 +11,7 @@ module Logging {
   }
 
   inline proc info(args ...?k) {
-    if (log_level >= 1) {
+    if (debug_mode >= 1) {
       write(here.id, "\t");
       writeln((...args));
       stdout.flush();
@@ -19,7 +19,7 @@ module Logging {
   }
 
   inline proc timing(args ...?k) {
-    if (log_level >= 2) {
+    if (debug_mode >= 2) {
       write(here.id, "\t");
       writeln((...args));
       stdout.flush();
