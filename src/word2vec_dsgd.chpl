@@ -489,7 +489,13 @@ proc InitNet() {
   }
 }
 
-proc TrainModelThread(tf: string, tid: int) {
+proc UpdateNet(id: int) {
+  /*var networkSpace = {0..#vocab_size*layer1_size};
+  syn0[0,networkSpace] += syn0[id,networkSpace];*/
+
+}
+
+proc TrainModelThread(tf: string, id: int, tid: int) {
   var a, b, d, cw, word, last_word, sentence_length, sentence_position: int(64);
   var word_count, last_word_count: int(64);
   var sen: [0..#(MAX_SENTENCE_LENGTH + 1)] int;
@@ -502,8 +508,6 @@ proc TrainModelThread(tf: string, tid: int) {
 
   var neu1: [LayerSpace] real;
   var neu1e: [LayerSpace] real;
-
-  const id = here.id;
 
   var trainFile = open(tf, iomode.r);
   var fileChunkSize = trainFile.length() / Locales.size;
@@ -554,6 +558,7 @@ proc TrainModelThread(tf: string, tid: int) {
     }
     if (atEOF || (word_count > train_words / num_threads)) {
       word_count_actual += word_count - last_word_count;
+      UpdateNet(id);
       local_iter -= 1;
       if (local_iter == 0) then break;
       word_count = 0;
@@ -707,8 +712,10 @@ proc TrainModel() {
   if (negative > 0) then InitUnigramTable();
 
   // run on a single locale using all threads available
-  forall i in 0..#num_threads {
-    TrainModelThread(train_file, i);
+  forall i in 0..#numLocales {
+    forall tid in 0..#num_threads {
+      TrainModelThread(train_file, syn0[i,0].locale.id, tid);
+    }
   }
 
   var outputFile = open(output_file, iomode.cw);
