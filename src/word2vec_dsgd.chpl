@@ -51,29 +51,450 @@ record VocabTreeEntry {
   var point: [0..#MAX_CODE_LENGTH] int;
 };
 
-var vocab_size = 0;
-var vocabDomain = {0..#vocab_max_size};
-var vocab: [vocabDomain] VocabEntry;
-var vocab_hash: [0..#vocab_hash_size] int = -1;
-var vocabTreeDomain: domain(1);
-var vocab_tree: [vocabTreeDomain] VocabTreeEntry;
+class VocabContext {
+  var vocab_size: int;
+  var vocab_max_size = 1000;
+  var vocabDomain = {0..#vocab_max_size};
+  var vocab: [vocabDomain] VocabEntry;
+  var vocab_hash: [0..#vocab_hash_size] int = -1;
+  var vocabTreeDomain: domain(1);
+  var vocab_tree: [vocabTreeDomain] VocabTreeEntry;
+
+  var train_words: int = 0;
+  var min_reduce = 1;
+
+  var table_size: int = 1e8:int;
+  var table: [0..#table_size] int;
+
+  var atCRLF = false;
+
+  proc clone(vocabContext: VocabContext) {
+    this.vocab_size = vocabContext.vocab_size;
+    this.vocab_max_size = vocabContext.vocab_max_size;
+    this.vocabDomain = {vocabContext.vocabDomain.low..vocabContext.vocabDomain.high};
+    this.vocab[this.vocabDomain] = vocabContext.vocab[this.vocabDomain];
+    this.vocab_hash[0..#vocab_hash_size] = vocabContext.vocab_hash[0..#vocab_hash_size];
+    this.vocabTreeDomain = {vocabContext.vocabTreeDomain.low..vocabContext.vocabTreeDomain.high};
+    this.vocab_tree[this.vocabTreeDomain] = vocabContext.vocab_tree[this.vocabTreeDomain];
+  }
+
+  proc InitUnigramTable() {
+    var a, i: int;
+    var d1, train_words_pow: real;
+    var power: real = 0.75;
+    for a in 0..#vocab_size do train_words_pow += vocab[a].cn ** power;
+    i = 0;
+    d1 = (vocab[i].cn ** power) / train_words_pow;
+    for a in 0..#table_size {
+      table[a] = i;
+      if (a / table_size:real > d1) {
+        i += 1;
+        d1 += (vocab[i].cn ** power) / train_words_pow;
+      }
+      if (i >= vocab_size) then i = vocab_size - 1;
+    }
+  }
+
+  inline proc readNextChar(ref ch: uint(8), reader): bool {
+    if (atCRLF) {
+      atCRLF = false;
+      ch = CRLF;
+      return true;
+    }
+    return reader.read(ch);
+  }
+
+  proc ReadWord(word: [?] uint(8), reader): int {
+    var a: int;
+    var ch: uint(8);
+
+    while readNextChar(ch, reader) {
+      if (ch == 13) then continue;
+      if ((ch == SPACE) || (ch == TAB) || (ch == CRLF)) {
+        if (a > 0) {
+          // Readers do not have ungetc, so Simulate ungetc using the atCRLF flag
+          if (ch == CRLF) then atCRLF = true;
+          break;
+        }
+        if (ch == CRLF) then return writeSpaceWord(word);
+                        else continue;
+      }
+      word[a] = ch;
+      a += 1;
+      if (a >= MAX_STRING - 1) then a -= 1; // Truncate too long words
+    }
+    word[a] = 0;
+    return a;
+  }
+
+  inline proc GetWordHash(word: [?] uint(8), len: int): int {
+    var hash: uint = 0;
+    for ch in 0..#len do hash = hash * 257 + word[ch]: uint;
+    hash = hash % vocab_hash_size: uint;
+    return hash: int;
+  }
+
+  // Returns position of a word in the vocabulary; if the word is not found, returns -1
+  proc SearchVocab(word: [?D] uint(8), len: int): int {
+    var hash = GetWordHash(word, len);
+
+    while (1) {
+      if (vocab_hash[hash] == -1) then return -1;
+      const wordIdx = vocab_hash[hash];
+      if (len == vocab[wordIdx].len) {
+        var found = true;
+        for i in 0..#len {
+          if (word[i] != vocab[wordIdx].word[i]) {
+            found = false;
+            break;
+          }
+        }
+        if found then return vocab_hash[hash];
+      }
+      hash = (hash + 1) % vocab_hash_size;
+    }
+
+    return -1;
+  }
+
+  proc ReadWordIndex(reader): int {
+    var word: [0..#MAX_STRING] uint(8);
+    var len = ReadWord(word, reader);
+    if (len == 0) then return -2;
+    return SearchVocab(word, len);
+  }
+
+  // Adds a word to the vocabulary
+  proc AddWordToVocab(word: [?D] uint(8), length: int): int {
+    var len = if (length > MAX_STRING) then MAX_STRING else length;
+    const wordIdx = vocab_size;
+    for i in 0..#len do vocab[wordIdx].word[i] = word[i];
+    vocab[wordIdx].len = len;
+    vocab[wordIdx].cn = 0;
+    vocab_size += 1;
+    // Reallocate memory if needed
+    if (vocab_size + 2 >= vocab_max_size) {
+      // TODO: research if the original += 1000 is adequate performance-wise
+      vocab_max_size *= 2;
+      vocabDomain = {0..#vocab_max_size};
+    }
+    var hash = GetWordHash(word, len);
+    while (vocab_hash[hash] != -1) {
+      hash = (hash + 1) % vocab_hash_size;
+    }
+    vocab_hash[hash] = vocab_size - 1;
+    return vocab_size - 1;
+  }
+
+  inline proc chpl_sort_cmp(a, b, param reverse=false, param eq=false) {
+    if eq {
+      if reverse then return a >= b;
+      else return a <= b;
+    } else {
+      if reverse then return a > b;
+      else return a < b;
+    }
+  }
+
+  proc InsertionSort(Data: [?Dom] VocabEntry, doublecheck=false, param reverse=false) where Dom.rank == 1 {
+    const lo = Dom.low;
+    for i in Dom {
+      const ithVal = Data(i);
+      var inserted = false;
+      for j in lo..i-1 by -1 {
+        if (chpl_sort_cmp(ithVal.cn, Data(j).cn, reverse)) {
+          Data(j+1) = Data(j);
+        } else {
+          Data(j+1) = ithVal;
+          inserted = true;
+          break;
+        }
+      }
+      if (!inserted) {
+        Data(lo) = ithVal;
+      }
+    }
+  }
+
+  proc QuickSort(Data: [?Dom] VocabEntry, minlen=7, doublecheck=false, param reverse=false) where Dom.rank == 1 {
+    // grab obvious indices
+    const lo = Dom.low,
+          hi = Dom.high,
+          mid = lo + (hi-lo+1)/2;
+
+    // base case -- use insertion sort
+    if (hi - lo < minlen) {
+      InsertionSort(Data, reverse=reverse);
+      return;
+    }
+
+    // find pivot using median-of-3 method
+    if (chpl_sort_cmp(Data(mid).cn, Data(lo).cn, reverse)) then Data(mid) <=> Data(lo);
+    if (chpl_sort_cmp(Data(hi).cn, Data(lo).cn, reverse)) then Data(hi) <=> Data(lo);
+    if (chpl_sort_cmp(Data(hi).cn, Data(mid).cn, reverse)) then Data(hi) <=> Data(mid);
+    const pivotVal = Data(mid);
+    Data(mid) = Data(hi-1);
+    Data(hi-1) = pivotVal;
+    // end median-of-3 partitioning
+
+    var loptr = lo,
+        hiptr = hi-1;
+    while (loptr < hiptr) {
+      do { loptr += 1; } while (chpl_sort_cmp(Data(loptr).cn, pivotVal.cn, reverse));
+      do { hiptr -= 1; } while (chpl_sort_cmp(pivotVal.cn, Data(hiptr).cn, reverse));
+      if (loptr < hiptr) {
+        Data(loptr) <=> Data(hiptr);
+      }
+    }
+
+    Data(hi-1) = Data(loptr);
+    Data(loptr) = pivotVal;
+
+    //  cobegin {
+      QuickSort(Data[..loptr-1], reverse=reverse);  // could use unbounded ranges here
+      QuickSort(Data[loptr+1..], reverse=reverse);
+      //  }
+  }
+
+  proc SortVocab() {
+    var a, size, hash: int;
+
+    // Sort the vocabulary and keep </s> at the first position
+    QuickSort(vocab[1..], vocab_size - 1, reverse=true);
+    for a in 0..#vocab_hash_size do vocab_hash[a] = -1;
+    size = vocab_size;
+    train_words = 0;
+    for a in 0..#size {
+      // Words occuring less than min_count times will be discarded from the vocab
+      if ((vocab[a].cn < min_count) && (a != 0)) {
+        vocab_size -= 1;
+        vocab[a].len = 0;
+        vocab[a].cn = 0;
+      } else {
+        // Hash will be re-computed, as after the sorting it is not actual
+        hash = GetWordHash(vocab[a].word, vocab[a].len);
+        while (vocab_hash[hash] != -1) do hash = (hash + 1) % vocab_hash_size;
+        vocab_hash[hash] = a;
+        train_words += vocab[a].cn;
+      }
+    }
+    vocabDomain = {0..#(vocab_size + 1)};
+    // Allocate memory for the binary tree construction
+    vocabTreeDomain = vocabDomain;
+  }
+
+  proc ReduceVocab() {
+    var a, b: int;
+    for a in 0..#vocab_size do if (vocab[a].cn > min_reduce) {
+      vocab[b].cn = vocab[a].cn;
+      vocab[b].word = vocab[a].word;
+      b += 1;
+    } else {
+      vocab[a].len = 0;
+      vocab[a].cn = 0;
+    }
+    vocab_size = b;
+    for a in 0..#vocab_hash_size do vocab_hash[a] = -1;
+    for a in 0..#vocab_size {
+      // Hash will be re-computed, as it is not actual
+      var hash = GetWordHash(vocab[a].word, vocab[a].len);
+      while (vocab_hash[hash] != -1) do hash = (hash + 1) % vocab_hash_size;
+      vocab_hash[hash] = a;
+    }
+    min_reduce += 1;
+  }
+
+  proc CreateBinaryTree() {
+    var b, i, min1i, min2i, pos1, pos2: int(64);
+    var point: [0..#MAX_CODE_LENGTH] int(64);
+    var code: [0..#MAX_CODE_LENGTH] uint(8);
+    var dom = {0..#(vocab_size*2 + 1)};
+    var count: [dom] int(64);
+    var binary: [dom] int(64);
+    var parent_node: [dom] int(64);
+    count = 1e15: int(64);
+    for a in 0..#vocab_size do count[a] = vocab[a].cn;
+    pos1 = vocab_size - 1;
+    pos2 = vocab_size;
+    // Following algorithm constructs the Huffman tree by adding one node at a time
+    for a in 0..#(vocab_size-1) {
+      // First, find two smallest nodes 'min1, min2'
+      if (pos1 >= 0) {
+        if (count[pos1] < count[pos2]) {
+          min1i = pos1;
+          pos1 -= 1;
+        } else {
+          min1i = pos2;
+          pos2 += 1;
+        }
+      } else {
+        min1i = pos2;
+        pos2 += 1;
+      }
+      if (pos1 >= 0) {
+        if (count[pos1] < count[pos2]) {
+          min2i = pos1;
+          pos1 -= 1;
+        } else {
+          min2i = pos2;
+          pos2 += 1;
+        }
+      } else {
+        min2i = pos2;
+        pos2 += 1;
+      }
+      count[vocab_size + a] = count[min1i] + count[min2i];
+      parent_node[min1i] = vocab_size + a;
+      parent_node[min2i] = vocab_size + a;
+      binary[min2i] = 1;
+    }
+    // Now assign binary code to each vocabulary word
+    for a in 0..#vocab_size {
+      b = a;
+      i = 0;
+      while (1) {
+        code[i] = binary[b]: uint(8);
+        point[i] = b;
+        i += 1;
+        b = parent_node[b];
+        if (b == vocab_size * 2 - 2) then break;
+      }
+      vocab_tree[a].codelen = i: uint(8);
+      vocab_tree[a].point[0] = vocab_size - 2;
+      for b in 0..#i {
+        vocab_tree[a].code[i - b - 1] = code[b];
+        vocab_tree[a].point[i - b] = point[b] - vocab_size;
+      }
+    }
+  }
+
+  proc SaveVocab(save_vocab_file) {
+    var f = open(save_vocab_file, iomode.cw);
+    var w = f.writer(locking=false);
+    for i in 0..#vocab_size {
+      for j in 0..#vocab[i].len do w.writef("%c", vocab[i].word[j]);
+      w.writeln(" ", vocab[i].cn);
+    }
+    w.close();
+    f.close();
+  }
+
+  proc ReadVocab(read_vocab_file) {
+    var a: int(64);
+    var cn: int;
+    var c: uint(8);
+    var word: [0..#MAX_STRING] uint(8);
+
+    var f = open(read_vocab_file, iomode.r);
+    /*if (fin == NULL) {
+      printf("Vocabulary file not found\n");
+      exit(1);
+    }*/
+    var r = f.reader(kind=ionative);
+
+    vocab_hash = -1;
+    vocab_size = 0;
+    train_words = 0;
+
+    while (1) {
+      var len = ReadWord(word, r);
+      if (len == 0) then break;
+      a = AddWordToVocab(word, len);
+      // read and compute word count
+      len = ReadWord(word, r);
+      if (len == 0) then break;
+      vocab[a].cn = wordToInt(word, len);
+      train_words += vocab[a].cn;
+      // skip CRLF
+      ReadWord(word, r);
+    }
+
+    r.close();
+    f.close();
+
+    // NOTE: we don't SortVocab here because the vocab is already sorted when read
+    if (debug_mode > 0) {
+      writeln("Vocab size: ", vocab_size);
+      writeln("Words in train file: ", train_words);
+    }
+    vocabTreeDomain = vocabDomain;
+  }
+
+  proc LearnVocabFromTrainFile(train_file) {
+    var word: [0..#MAX_STRING] uint(8);
+    var i: int(64);
+    var len: int;
+    for a in 0..#vocab_hash_size do vocab_hash[a] = -1;
+    var f = open(train_file, iomode.r);
+    /*if (fin == NULL) {
+      printf("ERROR: training data file not found!\n");
+      exit(1);
+    }*/
+    var r = f.reader(kind=ionative, locking=false);
+    vocab_size = 0;
+    writeSpaceWord(word);
+    AddWordToVocab(word, 4);
+    while (1) {
+      len = ReadWord(word, r);
+      if (len == 0) then break;
+      train_words += 1;
+      if (debug_mode > 0 && (train_words % 100000 == 0)) {
+        write(train_words / 1000, "K\r");
+        stdout.flush();
+      }
+      i = SearchVocab(word, len);
+      if (i == -1) {
+        var a = AddWordToVocab(word, len);
+        vocab[a].cn = 1;
+      } else {
+        vocab[i].cn += 1;
+      }
+      if (vocab_size > vocab_hash_size * 0.7) then ReduceVocab();
+    }
+    SortVocab();
+    if (debug_mode > 0) {
+      info("Vocab size: ", vocab_size);
+      info("Words in train file: ", train_words);
+    }
+    r.close();
+    f.close();
+  }
+
+  // Utilities
+
+  inline proc writeSpaceWord(word): int {
+    word[0] = ascii('<');
+    word[1] = ascii('/');
+    word[2] = ascii('s');
+    word[3] = ascii('>');
+    word[4] = 0;
+    return 4;
+  }
+
+  inline proc wordToInt(word: [?] uint(8), len: int): int {
+    var cn = 0;
+    var x = 1;
+    for i in 0..#len by -1 {
+      cn += x * (word[i] - 48);
+      x *= 10;
+    }
+    return cn;
+  }
+}
 
 var expTable: [0..#(EXP_TABLE_SIZE+1)] real;
-var table_size: int = 1e8:int;
-var table: [0..#table_size] int;
 
-var train_words: int = 0;
 var word_count_actual = 0;
 var starting_alpha: real;
-var min_reduce = 1;
-
-var atCRLF = false;
 
 class NetworkContext {
-  var vocab_size: int;
+  var vocabContext: VocabContext;
   var layer1_size: int;
   var hs: int;
   var negative: int;
+
+  const vocab_size = vocabContext.vocab_size;
+  const train_words = vocabContext.train_words;
 
   const MyLocaleView = {0..#numLocales, 1..1};
   const MyLocales: [MyLocaleView] locale = reshape(Locales, MyLocaleView);
@@ -161,7 +582,7 @@ class NetworkContext {
       }
       if (sentence_length == 0) {
         while (1) {
-          word = ReadWordIndex(reader);
+          word = vocabContext.ReadWordIndex(reader);
           if (word == -2) {
             atEOF = true;
             break;
@@ -171,7 +592,7 @@ class NetworkContext {
           if (word == 0) then break;
           // The subsampling randomly discards frequent words while keeping the ranking same
           if (sample > 0) {
-            var ran = (sqrt(vocab[word].cn / (sample * train_words):real) + 1) * (sample * train_words):real / vocab[word].cn;
+            var ran = (sqrt(vocabContext.vocab[word].cn / (sample * train_words):real) + 1) * (sample * vocabContext.train_words):real / vocabContext.vocab[word].cn;
             next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
             if (ran < (next_random & 0xFFFF):real / 65536:real) then continue;
           }
@@ -216,16 +637,16 @@ class NetworkContext {
         }
         if (cw) {
           for c in LayerSpace do neu1[c] /= cw;
-          if (hs) then for d in 0..#vocab_tree[word].codelen {
+          if (hs) then for d in 0..#vocabContext.vocab_tree[word].codelen {
             f = 0;
-            l2 = vocab_tree[word].point[d] * layer1_size;
+            l2 = vocabContext.vocab_tree[word].point[d] * layer1_size;
             // Propagate hidden -> output
             for c in LayerSpace do f += neu1[c] * syn1[id,c + l2];
             if (f <= -MAX_EXP) then continue;
             else if (f >= MAX_EXP) then continue;
             else f = expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int];
             // 'g' is the gradient multiplied by the learning rate
-            g = (1 - vocab_tree[word].code[d] - f) * alpha;
+            g = (1 - vocabContext.vocab_tree[word].code[d] - f) * alpha;
             // Propagate errors output -> hidden
             for c in LayerSpace do neu1e[c] += g * syn1[id,c + l2];
             // Learn weights hidden -> output
@@ -238,7 +659,7 @@ class NetworkContext {
               labelx = 1;
             } else {
               next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
-              target = table[((next_random >> 16) % table_size:uint(64)):int];
+              target = vocabContext.table[((next_random >> 16) % vocabContext.table_size:uint(64)):int];
               if (target == 0) then target = (next_random % (vocab_size - 1):uint(64) + 1):int;
               if (target == word) then continue;
               labelx = 0;
@@ -272,16 +693,16 @@ class NetworkContext {
           l1 = last_word * layer1_size;
           for c in LayerSpace do neu1e[c] = 0;
           // HIERARCHICAL SOFTMAX
-          if (hs) then for d in 0..#vocab_tree[word].codelen {
+          if (hs) then for d in 0..#vocabContext.vocab_tree[word].codelen {
             f = 0;
-            l2 = vocab_tree[word].point[d] * layer1_size;
+            l2 = vocabContext.vocab_tree[word].point[d] * layer1_size;
             // Propagate hidden -> output
             for c in LayerSpace do f += syn0[id,c + l1] * syn1[id,c + l2];
             if (f <= -MAX_EXP) then continue;
             else if (f >= MAX_EXP) then continue;
             else f = expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int];
             // 'g' is the gradient multiplied by the learning rate
-            g = (1 - vocab_tree[word].code[d] - f) * alpha;
+            g = (1 - vocabContext.vocab_tree[word].code[d] - f) * alpha;
             // Propagate errors output -> hidden
             for c in LayerSpace do neu1e[c] += g * syn1[id,c + l2];
             // Learn weights hidden -> output
@@ -294,7 +715,7 @@ class NetworkContext {
               labelx = 1;
             } else {
               next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
-              target = table[((next_random >> 16) % table_size:uint(64)):int];
+              target = vocabContext.table[((next_random >> 16) % vocabContext.table_size:uint(64)):int];
               if (target == 0) then target = (next_random % (vocab_size - 1):uint(64) + 1):int;
               if (target == word) then continue;
               labelx = 0;
@@ -324,405 +745,24 @@ class NetworkContext {
   }
 }
 
-proc InitUnigramTable() {
-  var a, i: int;
-  var d1, train_words_pow: real;
-  var power: real = 0.75;
-  for a in 0..#vocab_size do train_words_pow += vocab[a].cn ** power;
-  i = 0;
-  d1 = (vocab[i].cn ** power) / train_words_pow;
-  for a in 0..#table_size {
-    table[a] = i;
-    if (a / table_size:real > d1) {
-      i += 1;
-      d1 += (vocab[i].cn ** power) / train_words_pow;
-    }
-    if (i >= vocab_size) then i = vocab_size - 1;
-  }
-}
-
-inline proc readNextChar(ref ch: uint(8), reader): bool {
-  if (atCRLF) {
-    atCRLF = false;
-    ch = CRLF;
-    return true;
-  }
-  return reader.read(ch);
-}
-
-proc ReadWord(word: [?] uint(8), reader): int {
-  var a: int;
-  var ch: uint(8);
-
-  while readNextChar(ch, reader) {
-    if (ch == 13) then continue;
-    if ((ch == SPACE) || (ch == TAB) || (ch == CRLF)) {
-      if (a > 0) {
-        // Readers do not have ungetc, so Simulate ungetc using the atCRLF flag
-        if (ch == CRLF) then atCRLF = true;
-        break;
-      }
-      if (ch == CRLF) then return writeSpaceWord(word);
-                      else continue;
-    }
-    word[a] = ch;
-    a += 1;
-    if (a >= MAX_STRING - 1) then a -= 1; // Truncate too long words
-  }
-  word[a] = 0;
-  return a;
-}
-
-inline proc GetWordHash(word: [?] uint(8), len: int): int {
-  var hash: uint = 0;
-  for ch in 0..#len do hash = hash * 257 + word[ch]: uint;
-  hash = hash % vocab_hash_size: uint;
-  return hash: int;
-}
-
-// Returns position of a word in the vocabulary; if the word is not found, returns -1
-proc SearchVocab(word: [?D] uint(8), len: int): int {
-  var hash = GetWordHash(word, len);
-
-  while (1) {
-    if (vocab_hash[hash] == -1) then return -1;
-    const wordIdx = vocab_hash[hash];
-    if (len == vocab[wordIdx].len) {
-      var found = true;
-      for i in 0..#len {
-        if (word[i] != vocab[wordIdx].word[i]) {
-          found = false;
-          break;
-        }
-      }
-      if found then return vocab_hash[hash];
-    }
-    hash = (hash + 1) % vocab_hash_size;
-  }
-
-  return -1;
-}
-
-proc ReadWordIndex(reader): int {
-  var word: [0..#MAX_STRING] uint(8);
-  var len = ReadWord(word, reader);
-  if (len == 0) then return -2;
-  return SearchVocab(word, len);
-}
-
-// Adds a word to the vocabulary
-proc AddWordToVocab(word: [?D] uint(8), length: int): int {
-  var len = if (length > MAX_STRING) then MAX_STRING else length;
-  const wordIdx = vocab_size;
-  for i in 0..#len do vocab[wordIdx].word[i] = word[i];
-  vocab[wordIdx].len = len;
-  vocab[wordIdx].cn = 0;
-  vocab_size += 1;
-  // Reallocate memory if needed
-  if (vocab_size + 2 >= vocab_max_size) {
-    // TODO: research if the original += 1000 is adequate performance-wise
-    vocab_max_size *= 2;
-    vocabDomain = {0..#vocab_max_size};
-  }
-  var hash = GetWordHash(word, len);
-  while (vocab_hash[hash] != -1) {
-    hash = (hash + 1) % vocab_hash_size;
-  }
-  vocab_hash[hash] = vocab_size - 1;
-  return vocab_size - 1;
-}
-
-private inline proc chpl_sort_cmp(a, b, param reverse=false, param eq=false) {
-  if eq {
-    if reverse then return a >= b;
-    else return a <= b;
-  } else {
-    if reverse then return a > b;
-    else return a < b;
-  }
-}
-
-proc InsertionSort(Data: [?Dom] VocabEntry, doublecheck=false, param reverse=false) where Dom.rank == 1 {
-  const lo = Dom.low;
-  for i in Dom {
-    const ithVal = Data(i);
-    var inserted = false;
-    for j in lo..i-1 by -1 {
-      if (chpl_sort_cmp(ithVal.cn, Data(j).cn, reverse)) {
-        Data(j+1) = Data(j);
-      } else {
-        Data(j+1) = ithVal;
-        inserted = true;
-        break;
-      }
-    }
-    if (!inserted) {
-      Data(lo) = ithVal;
-    }
-  }
-}
-
-proc QuickSort(Data: [?Dom] VocabEntry, minlen=7, doublecheck=false, param reverse=false) where Dom.rank == 1 {
-  // grab obvious indices
-  const lo = Dom.low,
-        hi = Dom.high,
-        mid = lo + (hi-lo+1)/2;
-
-  // base case -- use insertion sort
-  if (hi - lo < minlen) {
-    InsertionSort(Data, reverse=reverse);
-    return;
-  }
-
-  // find pivot using median-of-3 method
-  if (chpl_sort_cmp(Data(mid).cn, Data(lo).cn, reverse)) then Data(mid) <=> Data(lo);
-  if (chpl_sort_cmp(Data(hi).cn, Data(lo).cn, reverse)) then Data(hi) <=> Data(lo);
-  if (chpl_sort_cmp(Data(hi).cn, Data(mid).cn, reverse)) then Data(hi) <=> Data(mid);
-  const pivotVal = Data(mid);
-  Data(mid) = Data(hi-1);
-  Data(hi-1) = pivotVal;
-  // end median-of-3 partitioning
-
-  var loptr = lo,
-      hiptr = hi-1;
-  while (loptr < hiptr) {
-    do { loptr += 1; } while (chpl_sort_cmp(Data(loptr).cn, pivotVal.cn, reverse));
-    do { hiptr -= 1; } while (chpl_sort_cmp(pivotVal.cn, Data(hiptr).cn, reverse));
-    if (loptr < hiptr) {
-      Data(loptr) <=> Data(hiptr);
-    }
-  }
-
-  Data(hi-1) = Data(loptr);
-  Data(loptr) = pivotVal;
-
-  //  cobegin {
-    QuickSort(Data[..loptr-1], reverse=reverse);  // could use unbounded ranges here
-    QuickSort(Data[loptr+1..], reverse=reverse);
-    //  }
-}
-
-proc SortVocab() {
-  var a, size, hash: int;
-
-  // Sort the vocabulary and keep </s> at the first position
-  QuickSort(vocab[1..], vocab_size - 1, reverse=true);
-  for a in 0..#vocab_hash_size do vocab_hash[a] = -1;
-  size = vocab_size;
-  train_words = 0;
-  for a in 0..#size {
-    // Words occuring less than min_count times will be discarded from the vocab
-    if ((vocab[a].cn < min_count) && (a != 0)) {
-      vocab_size -= 1;
-      vocab[a].len = 0;
-      vocab[a].cn = 0;
-    } else {
-      // Hash will be re-computed, as after the sorting it is not actual
-      hash = GetWordHash(vocab[a].word, vocab[a].len);
-      while (vocab_hash[hash] != -1) do hash = (hash + 1) % vocab_hash_size;
-      vocab_hash[hash] = a;
-      train_words += vocab[a].cn;
-    }
-  }
-  vocabDomain = {0..#(vocab_size + 1)};
-  // Allocate memory for the binary tree construction
-  vocabTreeDomain = vocabDomain;
-}
-
-proc ReduceVocab() {
-  var a, b: int;
-  for a in 0..#vocab_size do if (vocab[a].cn > min_reduce) {
-    vocab[b].cn = vocab[a].cn;
-    vocab[b].word = vocab[a].word;
-    b += 1;
-  } else {
-    vocab[a].len = 0;
-    vocab[a].cn = 0;
-  }
-  vocab_size = b;
-  for a in 0..#vocab_hash_size do vocab_hash[a] = -1;
-  for a in 0..#vocab_size {
-    // Hash will be re-computed, as it is not actual
-    var hash = GetWordHash(vocab[a].word, vocab[a].len);
-    while (vocab_hash[hash] != -1) do hash = (hash + 1) % vocab_hash_size;
-    vocab_hash[hash] = a;
-  }
-  min_reduce += 1;
-}
-
-proc CreateBinaryTree() {
-  var b, i, min1i, min2i, pos1, pos2: int(64);
-  var point: [0..#MAX_CODE_LENGTH] int(64);
-  var code: [0..#MAX_CODE_LENGTH] uint(8);
-  var dom = {0..#(vocab_size*2 + 1)};
-  var count: [dom] int(64);
-  var binary: [dom] int(64);
-  var parent_node: [dom] int(64);
-  count = 1e15: int(64);
-  for a in 0..#vocab_size do count[a] = vocab[a].cn;
-  pos1 = vocab_size - 1;
-  pos2 = vocab_size;
-  // Following algorithm constructs the Huffman tree by adding one node at a time
-  for a in 0..#(vocab_size-1) {
-    // First, find two smallest nodes 'min1, min2'
-    if (pos1 >= 0) {
-      if (count[pos1] < count[pos2]) {
-        min1i = pos1;
-        pos1 -= 1;
-      } else {
-        min1i = pos2;
-        pos2 += 1;
-      }
-    } else {
-      min1i = pos2;
-      pos2 += 1;
-    }
-    if (pos1 >= 0) {
-      if (count[pos1] < count[pos2]) {
-        min2i = pos1;
-        pos1 -= 1;
-      } else {
-        min2i = pos2;
-        pos2 += 1;
-      }
-    } else {
-      min2i = pos2;
-      pos2 += 1;
-    }
-    count[vocab_size + a] = count[min1i] + count[min2i];
-    parent_node[min1i] = vocab_size + a;
-    parent_node[min2i] = vocab_size + a;
-    binary[min2i] = 1;
-  }
-  // Now assign binary code to each vocabulary word
-  for a in 0..#vocab_size {
-    b = a;
-    i = 0;
-    while (1) {
-      code[i] = binary[b]: uint(8);
-      point[i] = b;
-      i += 1;
-      b = parent_node[b];
-      if (b == vocab_size * 2 - 2) then break;
-    }
-    vocab_tree[a].codelen = i: uint(8);
-    vocab_tree[a].point[0] = vocab_size - 2;
-    for b in 0..#i {
-      vocab_tree[a].code[i - b - 1] = code[b];
-      vocab_tree[a].point[i - b] = point[b] - vocab_size;
-    }
-  }
-}
-
-proc LearnVocabFromTrainFile() {
-  var word: [0..#MAX_STRING] uint(8);
-  var i: int(64);
-  var len: int;
-  for a in 0..#vocab_hash_size do vocab_hash[a] = -1;
-  var f = open(train_file, iomode.r);
-  /*if (fin == NULL) {
-    printf("ERROR: training data file not found!\n");
-    exit(1);
-  }*/
-  var r = f.reader(kind=ionative, locking=false);
-  vocab_size = 0;
-  writeSpaceWord(word);
-  AddWordToVocab(word, 4);
-  while (1) {
-    len = ReadWord(word, r);
-    if (len == 0) then break;
-    train_words += 1;
-    if (debug_mode > 0 && (train_words % 100000 == 0)) {
-      write(train_words / 1000, "K\r");
-      stdout.flush();
-    }
-    i = SearchVocab(word, len);
-    if (i == -1) {
-      var a = AddWordToVocab(word, len);
-      vocab[a].cn = 1;
-    } else {
-      vocab[i].cn += 1;
-    }
-    if (vocab_size > vocab_hash_size * 0.7) then ReduceVocab();
-  }
-  SortVocab();
-  if (debug_mode > 0) {
-    info("Vocab size: ", vocab_size);
-    info("Words in train file: ", train_words);
-  }
-  r.close();
-  f.close();
-}
-
-proc SaveVocab() {
-  var f = open(save_vocab_file, iomode.cw);
-  var w = f.writer(locking=false);
-  for i in 0..#vocab_size {
-    for j in 0..#vocab[i].len do w.writef("%c", vocab[i].word[j]);
-    w.writeln(" ", vocab[i].cn);
-  }
-  w.close();
-  f.close();
-}
-
-proc ReadVocab() {
-  var a: int(64);
-  var cn: int;
-  var c: uint(8);
-  var word: [0..#MAX_STRING] uint(8);
-
-  var f = open(read_vocab_file, iomode.r);
-  /*if (fin == NULL) {
-    printf("Vocabulary file not found\n");
-    exit(1);
-  }*/
-  var r = f.reader(kind=ionative);
-
-  vocab_hash = -1;
-  vocab_size = 0;
-  train_words = 0;
-
-  while (1) {
-    var len = ReadWord(word, r);
-    if (len == 0) then break;
-    a = AddWordToVocab(word, len);
-    // read and compute word count
-    len = ReadWord(word, r);
-    if (len == 0) then break;
-    vocab[a].cn = wordToInt(word, len);
-    train_words += vocab[a].cn;
-    // skip CRLF
-    ReadWord(word, r);
-  }
-
-  r.close();
-  f.close();
-
-  // NOTE: we don't SortVocab here because the vocab is already sorted when read
-  if (debug_mode > 0) {
-    writeln("Vocab size: ", vocab_size);
-    writeln("Words in train file: ", train_words);
-  }
-  vocabTreeDomain = vocabDomain;
-}
-
 proc TrainModel() {
   var a, b, c, d: int;
   var t: Timer;
 
   info("Starting training using file ", train_file);
   starting_alpha = alpha;
-  if (read_vocab_file != "") then ReadVocab(); else LearnVocabFromTrainFile();
-  if (save_vocab_file != "") then SaveVocab();
+  var vocabContext = new VocabContext();
+  if (read_vocab_file != "") then vocabContext.ReadVocab(read_vocab_file); else vocabContext.LearnVocabFromTrainFile(train_file);
+  if (save_vocab_file != "") then vocabContext.SaveVocab(save_vocab_file);
   if (output_file == "") then return;
-  var network = new NetworkContext(vocab_size, layer1_size, hs, negative);
+  vocabContext.CreateBinaryTree();
+  if (negative > 0) then vocabContext.InitUnigramTable();
+  var network = new NetworkContext(vocabContext, layer1_size, hs, negative);
   network.Init();
-  CreateBinaryTree();
-  if (negative > 0) then InitUnigramTable();
 
   // run on a single locale using all threads available
   forall loc in Locales do on loc {
-    var localNetwork = new NetworkContext(vocab_size, layer1_size, hs, negative);
+    var localNetwork = new NetworkContext(vocabContext, layer1_size, hs, negative);
     localNetwork.Clone(network);
     forall i in 0..#num_threads {
       local localNetwork.TrainModelThread(train_file, i);
@@ -734,10 +774,10 @@ proc TrainModel() {
   var writer = outputFile.writer(locking=false);
   if (classes == 0) {
     // Save the word vectors
-    writer.writeln(vocab_size, " ", layer1_size);
-    for a in 0..#vocab_size {
-      for j in 0..#vocab[a].len {
-        writer.writef("%c", vocab[a].word[j]);
+    writer.writeln(vocabContext.vocab_size, " ", layer1_size);
+    for a in 0..#vocabContext.vocab_size {
+      for j in 0..#vocabContext.vocab[a].len {
+        writer.writef("%c", vocabContext.vocab[a].word[j]);
       }
       writer.write(" ");
       if (binary) then for b in LayerSpace do writer.writef("%|4r", network.syn0[0,a * layer1_size + b]);
@@ -750,15 +790,15 @@ proc TrainModel() {
     var iterX = 10;
     var closeid: int;
     var centcn: [0..#classes] int;
-    var cl: [0..#vocab_size] int;
+    var cl: [0..#vocabContext.vocab_size] int;
     var closev, x: real;
     var cent: [0..#classes*layer1_size] real;
 
-    for a in 0..#vocab_size do cl[a] = a % clcn;
+    for a in 0..#vocabContext.vocab_size do cl[a] = a % clcn;
     for a in 0..iterX {
       for b in 0..#(clcn * layer1_size) do cent[b] = 0;
       for b in 0..#clcn do centcn[b] = 1;
-      for c in 0..#vocab_size {
+      for c in 0..#vocabContext.vocab_size {
         for d in LayerSpace do cent[layer1_size * cl[c] + d] += network.syn0[0,c * layer1_size + d];
         centcn[cl[c]] += 1;
       }
@@ -771,7 +811,7 @@ proc TrainModel() {
         closev = sqrt(closev);
         for c in LayerSpace do cent[layer1_size * b + c] /= closev;
       }
-      for c in 0..#vocab_size {
+      for c in 0..#vocabContext.vocab_size {
         closev = -10;
         closeid = 0;
         for d in 0..#clcn {
@@ -786,8 +826,8 @@ proc TrainModel() {
       }
     }
     // Save the K-means classes
-    for a in 0..#vocab_size {
-      for j in 0..#vocab[a].len do writer.writef("%c", vocab[a].word[j]);
+    for a in 0..#vocabContext.vocab_size {
+      for j in 0..#vocabContext.vocab[a].len do writer.writef("%c", vocabContext.vocab[a].word[j]);
       writer.write(" ");
       if (binary) then writer.writef("%|4i", cl[a]);
       else writer.write(cl[a]);
@@ -796,27 +836,6 @@ proc TrainModel() {
   }
   writer.close();
   outputFile.close();
-}
-
-// Utilities
-
-inline proc writeSpaceWord(word): int {
-  word[0] = ascii('<');
-  word[1] = ascii('/');
-  word[2] = ascii('s');
-  word[3] = ascii('>');
-  word[4] = 0;
-  return 4;
-}
-
-inline proc wordToInt(word: [?] uint(8), len: int): int {
-  var cn = 0;
-  var x = 1;
-  for i in 0..#len by -1 {
-    cn += x * (word[i] - 48);
-    x *= 10;
-  }
-  return cn;
 }
 
 proc main() {
