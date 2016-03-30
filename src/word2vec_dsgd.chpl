@@ -1,7 +1,7 @@
 // The following is a "lexical" translation of the classic word2vec
 // As this is a baseline for creating a distributed version of word2vec in Chapel,
 // this translation biases towards lexical equivalence versus performance.
-use Logging, Time;
+use BlockDist, Logging, Time;
 
 const MAX_STRING = 100;
 const EXP_TABLE_SIZE = 1000;
@@ -61,29 +61,6 @@ var vocabDomain = {0..#vocab_max_size};
 var vocab: [vocabDomain] VocabEntry;
 var vocab_hash: [0..#vocab_hash_size] int = -1;
 
-class NetworkContext {
-  var vocab_size: int;
-  var layer1_size: int;
-  var hs: int;
-  var negative: int;
-  var syn0Domain: domain(2) = {0..#numLocales,0..#(vocab_size*layer1_size)};
-  var syn0: [syn0Domain] real;
-  var syn1Domain: domain(2) = if (hs) then syn0Domain else {0..#numLocales,0..#1};
-  var syn1: [syn1Domain] real;
-  var syn1negDomain: domain(2) = if (negative) then syn0Domain else {0..#numLocales,0..#1};
-  var syn1neg: [syn1negDomain] real;
-
-  proc InitNet() {
-    var next_random: uint(64) = 1;
-    for a in 0..#vocab_size {
-      for b in LayerSpace {
-        next_random = next_random * 25214903917:uint(64) + 11;
-        syn0[0,a * layer1_size + b] = (((next_random & 0xFFFF) / 65536:real) - 0.5) / layer1_size;
-      }
-    }
-  }
-}
-
 var expTable: [0..#(EXP_TABLE_SIZE+1)] real;
 var table_size: int = 1e8:int;
 var table: [0..#table_size] int;
@@ -94,6 +71,261 @@ var starting_alpha: real;
 var min_reduce = 1;
 
 var atCRLF = false;
+
+class NetworkContext {
+  var vocab_size: int;
+  var layer1_size: int;
+  var hs: int;
+  var negative: int;
+
+  const MyLocaleView = {0..#numLocales, 1..1};
+  const MyLocales: [MyLocaleView] locale = reshape(Locales, MyLocaleView);
+
+  const syn0Domain: domain(2) = {0..#numLocales,0..#(vocab_size*layer1_size)};
+  /*const syn0DomainSpace = syn0Domain dmapped Block(boundingBox=syn0Domain,targetLocales=MyLocales);*/
+  var syn0: [syn0Domain] real;
+  const syn1Domain: domain(2) = if (hs) then syn0Domain else {0..#numLocales,0..#1};
+  /*const syn1DomainSpace = syn1Domain dmapped Block(boundingBox=syn1Domain,targetLocales=MyLocales);*/
+  var syn1: [syn1Domain] real;
+  const syn1negDomain: domain(2) = if (negative) then syn0Domain else {0..#numLocales,0..#1};
+  /*const syn1negDomainSpace = syn1negDomain dmapped Block(boundingBox=syn1negDomain,targetLocales=MyLocales);*/
+  var syn1neg: [syn1negDomain] real;
+
+  proc Init() {
+    var next_random: uint(64) = 1;
+    for a in 0..#vocab_size {
+      for b in LayerSpace {
+        next_random = next_random * 25214903917:uint(64) + 11;
+        syn0[0,a * layer1_size + b] = (((next_random & 0xFFFF) / 65536:real) - 0.5) / layer1_size;
+      }
+    }
+  }
+
+  proc Clone(networkContext: NetworkContext) {
+    /*if (this.syn0Domain == networkContext.syn0Domain) then halt("syn0Domain not equal");
+    if (this.syn1Domain == networkContext.syn1Domain) then halt("syn0Domain not equal");
+    if (this.syn1negDomain == networkContext.syn1negDomain) then halt("syn0Domain not equal");*/
+    this.syn0[this.syn0Domain] = networkContext.syn0[this.syn0Domain];
+    this.syn1[this.syn1Domain] = networkContext.syn1[this.syn1Domain];
+    this.syn1neg[this.syn1negDomain] = networkContext.syn1neg[this.syn1negDomain];
+  }
+
+  proc update(networkContext: NetworkContext) {
+    /*if (this.syn0Domain == networkContext.syn0Domain) then halt("syn0Domain not equal");
+    if (this.syn1Domain == networkContext.syn1Domain) then halt("syn0Domain not equal");
+    if (this.syn1negDomain == networkContext.syn1negDomain) then halt("syn0Domain not equal");*/
+    /*syn0 += reference.syn0 - latest.syn0;
+    syn1 += reference.syn1 - latest.syn1;
+    syn1neg += reference.syn1neg - latest.syn1neg;*/
+    this.syn0[this.syn0Domain] = networkContext.syn0[this.syn0Domain];
+    this.syn1[this.syn1Domain] = networkContext.syn1[this.syn1Domain];
+    this.syn1neg[this.syn1negDomain] = networkContext.syn1neg[this.syn1negDomain];
+  }
+
+  proc TrainModelThread(tf: string, tid: int) {
+    var a, b, d, cw, word, last_word, sentence_length, sentence_position: int(64);
+    var word_count, last_word_count: int(64);
+    var sen: [0..#(MAX_SENTENCE_LENGTH + 1)] int;
+    var l1, l2, c, target, labelx: int(64);
+    var local_iter = iterations;
+    var next_random: uint(64) = tid:uint(64);
+    var f, g: real;
+    var t: Timer;
+    var atEOF = false;
+
+    var neu1: [LayerSpace] real;
+    var neu1e: [LayerSpace] real;
+
+    var trainFile = open(tf, iomode.r);
+    var fileChunkSize = trainFile.length() / num_threads;
+    var seekStart = fileChunkSize * tid;
+    var seekStop = fileChunkSize * (tid + 1);
+    var reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop, locking=false);
+
+    const id = here.id;
+
+    t.start();
+    var start = t.elapsed(TimeUnits.microseconds);
+
+    while (1) {
+      if (word_count - last_word_count > 10000) {
+        word_count_actual += word_count - last_word_count;
+        last_word_count = word_count;
+        if (debug_mode > 1) {
+          var now = t.elapsed(TimeUnits.milliseconds);
+          writef("\rAlpha: %r  Progress: %0.2r%%  Words/thread/sec: %rk  ",
+                alpha,
+                (word_count_actual / (iterations * train_words + 1):real) * 100,
+                word_count_actual / ((now - start + 1) / 1000) / 1000);
+          stdout.flush();
+        }
+        alpha = starting_alpha * (1 - word_count_actual / (iterations * train_words + 1):real);
+        if (alpha < starting_alpha * 0.0001) then alpha = starting_alpha * 0.0001;
+      }
+      if (sentence_length == 0) {
+        while (1) {
+          word = ReadWordIndex(reader);
+          if (word == -2) {
+            atEOF = true;
+            break;
+          }
+          if (word == -1) then continue;
+          word_count += 1;
+          if (word == 0) then break;
+          // The subsampling randomly discards frequent words while keeping the ranking same
+          if (sample > 0) {
+            var ran = (sqrt(vocab[word].cn / (sample * train_words):real) + 1) * (sample * train_words):real / vocab[word].cn;
+            next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
+            if (ran < (next_random & 0xFFFF):real / 65536:real) then continue;
+          }
+          sen[sentence_length] = word;
+          sentence_length += 1;
+          if (sentence_length >= MAX_SENTENCE_LENGTH) then break;
+        }
+        sentence_position = 0;
+      }
+      if (atEOF || (word_count > train_words / num_threads)) {
+        word_count_actual += word_count - last_word_count;
+        local_iter -= 1;
+        if (local_iter == 0) then break;
+        word_count = 0;
+        last_word_count = 0;
+        sentence_length = 0;
+        reader.close();
+        reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop);
+        atEOF = false;
+        continue;
+      }
+      word = sen[sentence_position];
+      if (word == -1) then continue;
+      for c in LayerSpace {
+        neu1[c] = 0;
+        neu1e[c] = 0;
+      }
+      next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
+      b = (next_random % window: uint(64)):int(64);
+      if (cbow) {  //train the cbow architecture
+        // in -> hidden
+        cw = 0;
+        for a in b..(window * 2 - b) do if (a != window) {
+          c = sentence_position - window + a;
+          if (c < 0) then continue;
+          if (c >= sentence_length) then continue;
+          last_word = sen[c];
+          if (last_word == -1) then continue;
+          /*local forall (c,d) in zip(0..#layer1_size,(last_word*layer1_size)..#layer1_size) do neu1[c] += syn0[id,d];*/
+          for c in LayerSpace do neu1[c] += syn0[id,c + last_word * layer1_size];
+          cw += 1;
+        }
+        if (cw) {
+          for c in LayerSpace do neu1[c] /= cw;
+          if (hs) then for d in 0..#vocab[word].node.codelen {
+            f = 0;
+            l2 = vocab[word].node.point[d] * layer1_size;
+            // Propagate hidden -> output
+            for c in LayerSpace do f += neu1[c] * syn1[id,c + l2];
+            if (f <= -MAX_EXP) then continue;
+            else if (f >= MAX_EXP) then continue;
+            else f = expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int];
+            // 'g' is the gradient multiplied by the learning rate
+            g = (1 - vocab[word].node.code[d] - f) * alpha;
+            // Propagate errors output -> hidden
+            for c in LayerSpace do neu1e[c] += g * syn1[id,c + l2];
+            // Learn weights hidden -> output
+            for c in LayerSpace do syn1[id,c + l2] += g * neu1[c];
+          }
+          // NEGATIVE SAMPLING
+          if (negative > 0) then for d in 0..#(negative + 1) {
+            if (d == 0) {
+              target = word;
+              labelx = 1;
+            } else {
+              next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
+              target = table[((next_random >> 16) % table_size:uint(64)):int];
+              if (target == 0) then target = (next_random % (vocab_size - 1):uint(64) + 1):int;
+              if (target == word) then continue;
+              labelx = 0;
+            }
+            l2 = target * layer1_size;
+            f = 0;
+            for c in LayerSpace do f += neu1[c] * syn1neg[id,c + l2];
+            if (f > MAX_EXP) then g = (labelx - 1) * alpha;
+            else if (f < -MAX_EXP) then g = (labelx - 0) * alpha;
+            else g = (labelx - expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int]) * alpha;
+            for c in LayerSpace do neu1e[c] += g * syn1neg[id,c + l2];
+            for c in LayerSpace do syn1neg[id,c + l2] += g * neu1[c];
+          }
+          // hidden -> in
+          for a in b..(window * 2 - b) do if (a != window) {
+            c = sentence_position - window + a;
+            if (c < 0) then continue;
+            if (c >= sentence_length) then continue;
+            last_word = sen[c];
+            if (last_word == -1) then continue;
+            for c in LayerSpace do syn0[id,c + last_word * layer1_size] += neu1e[c];
+          }
+        }
+      } else {  //train skip-gram
+        for a in b..(window * 2 - b) do if (a != window) {
+          c = sentence_position - window + a;
+          if (c < 0) then continue;
+          if (c >= sentence_length) then continue;
+          last_word = sen[c];
+          if (last_word == -1) then continue;
+          l1 = last_word * layer1_size;
+          for c in LayerSpace do neu1e[c] = 0;
+          // HIERARCHICAL SOFTMAX
+          if (hs) then for d in 0..#vocab[word].node.codelen {
+            f = 0;
+            l2 = vocab[word].node.point[d] * layer1_size;
+            // Propagate hidden -> output
+            for c in LayerSpace do f += syn0[id,c + l1] * syn1[id,c + l2];
+            if (f <= -MAX_EXP) then continue;
+            else if (f >= MAX_EXP) then continue;
+            else f = expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int];
+            // 'g' is the gradient multiplied by the learning rate
+            g = (1 - vocab[word].node.code[d] - f) * alpha;
+            // Propagate errors output -> hidden
+            for c in LayerSpace do neu1e[c] += g * syn1[id,c + l2];
+            // Learn weights hidden -> output
+            for c in LayerSpace do syn1[id,c + l2] += g * syn0[id,c + l1];
+          }
+          // NEGATIVE SAMPLING
+          if (negative > 0) then for d in 0..#negative {
+            if (d == 0) {
+              target = word;
+              labelx = 1;
+            } else {
+              next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
+              target = table[((next_random >> 16) % table_size:uint(64)):int];
+              if (target == 0) then target = (next_random % (vocab_size - 1):uint(64) + 1):int;
+              if (target == word) then continue;
+              labelx = 0;
+            }
+            l2 = target * layer1_size;
+            f = 0;
+            for c in LayerSpace do f += syn0[id,c + l1] * syn1neg[id,c + l2];
+            if (f > MAX_EXP) then g = (labelx - 1) * alpha;
+            else if (f < -MAX_EXP) then g = (labelx - 0) * alpha;
+            else g = (labelx - expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int]) * alpha;
+            for c in LayerSpace do neu1e[c] += g * syn1neg[id,c + l2];
+            for c in LayerSpace do syn1neg[id,c + l2] += g * syn0[id,c + l1];
+          }
+          // Learn weights input -> hidden
+          for c in LayerSpace do syn0[id,c + l1] += neu1e[c];
+        }
+      }
+      sentence_position += 1;
+      if (sentence_position >= sentence_length) {
+        sentence_length = 0;
+        continue;
+      }
+    }
+    t.stop();
+    reader.close();
+    trainFile.close();
+  }
+}
 
 proc InitUnigramTable() {
   var a, i: int;
@@ -482,209 +714,6 @@ proc ReadVocab() {
   for a in 0..#vocab_size do vocab[a].node = new VocabTreeNode();
 }
 
-proc TrainModelThread(tf: string, tid: int, network) {
-  var a, b, d, cw, word, last_word, sentence_length, sentence_position: int(64);
-  var word_count, last_word_count: int(64);
-  var sen: [0..#(MAX_SENTENCE_LENGTH + 1)] int;
-  var l1, l2, c, target, labelx: int(64);
-  var local_iter = iterations;
-  var next_random: uint(64) = tid:uint(64);
-  var f, g: real;
-  var t: Timer;
-  var atEOF = false;
-
-  var neu1: [LayerSpace] real;
-  var neu1e: [LayerSpace] real;
-
-  var trainFile = open(tf, iomode.r);
-  var fileChunkSize = trainFile.length() / num_threads;
-  var seekStart = fileChunkSize * tid;
-  var seekStop = fileChunkSize * (tid + 1);
-  var reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop, locking=false);
-
-  const id = here.id;
-
-  t.start();
-  var start = t.elapsed(TimeUnits.microseconds);
-
-  while (1) {
-    if (word_count - last_word_count > 10000) {
-      word_count_actual += word_count - last_word_count;
-      last_word_count = word_count;
-      if (debug_mode > 1) {
-        var now = t.elapsed(TimeUnits.milliseconds);
-        writef("\rAlpha: %r  Progress: %0.2r%%  Words/thread/sec: %rk  ",
-              alpha,
-              (word_count_actual / (iterations * train_words + 1):real) * 100,
-              word_count_actual / ((now - start + 1) / 1000) / 1000);
-        stdout.flush();
-      }
-      alpha = starting_alpha * (1 - word_count_actual / (iterations * train_words + 1):real);
-      if (alpha < starting_alpha * 0.0001) then alpha = starting_alpha * 0.0001;
-    }
-    if (sentence_length == 0) {
-      while (1) {
-        word = ReadWordIndex(reader);
-        if (word == -2) {
-          atEOF = true;
-          break;
-        }
-        if (word == -1) then continue;
-        word_count += 1;
-        if (word == 0) then break;
-        // The subsampling randomly discards frequent words while keeping the ranking same
-        if (sample > 0) {
-          var ran = (sqrt(vocab[word].cn / (sample * train_words):real) + 1) * (sample * train_words):real / vocab[word].cn;
-          next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
-          if (ran < (next_random & 0xFFFF):real / 65536:real) then continue;
-        }
-        sen[sentence_length] = word;
-        sentence_length += 1;
-        if (sentence_length >= MAX_SENTENCE_LENGTH) then break;
-      }
-      sentence_position = 0;
-    }
-    if (atEOF || (word_count > train_words / num_threads)) {
-      word_count_actual += word_count - last_word_count;
-      local_iter -= 1;
-      if (local_iter == 0) then break;
-      word_count = 0;
-      last_word_count = 0;
-      sentence_length = 0;
-      reader.close();
-      reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop);
-      atEOF = false;
-      continue;
-    }
-    word = sen[sentence_position];
-    if (word == -1) then continue;
-    for c in LayerSpace {
-      neu1[c] = 0;
-      neu1e[c] = 0;
-    }
-    next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
-    b = (next_random % window: uint(64)):int(64);
-    if (cbow) {  //train the cbow architecture
-      // in -> hidden
-      cw = 0;
-      for a in b..(window * 2 - b) do if (a != window) {
-        c = sentence_position - window + a;
-        if (c < 0) then continue;
-        if (c >= sentence_length) then continue;
-        last_word = sen[c];
-        if (last_word == -1) then continue;
-        for c in LayerSpace do neu1[c] += network.syn0[id,c + last_word * layer1_size];
-        cw += 1;
-      }
-      if (cw) {
-        for c in LayerSpace do neu1[c] /= cw;
-        if (hs) then for d in 0..#vocab[word].node.codelen {
-          f = 0;
-          l2 = vocab[word].node.point[d] * layer1_size;
-          // Propagate hidden -> output
-          for c in LayerSpace do f += neu1[c] * network.syn1[id,c + l2];
-          if (f <= -MAX_EXP) then continue;
-          else if (f >= MAX_EXP) then continue;
-          else f = expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int];
-          // 'g' is the gradient multiplied by the learning rate
-          g = (1 - vocab[word].node.code[d] - f) * alpha;
-          // Propagate errors output -> hidden
-          for c in LayerSpace do neu1e[c] += g * network.syn1[id,c + l2];
-          // Learn weights hidden -> output
-          for c in LayerSpace do network.syn1[id,c + l2] += g * neu1[c];
-        }
-        // NEGATIVE SAMPLING
-        if (negative > 0) then for d in 0..#(negative + 1) {
-          if (d == 0) {
-            target = word;
-            labelx = 1;
-          } else {
-            next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
-            target = table[((next_random >> 16) % table_size:uint(64)):int];
-            if (target == 0) then target = (next_random % (vocab_size - 1):uint(64) + 1):int;
-            if (target == word) then continue;
-            labelx = 0;
-          }
-          l2 = target * layer1_size;
-          f = 0;
-          for c in LayerSpace do f += neu1[c] * network.syn1neg[id,c + l2];
-          if (f > MAX_EXP) then g = (labelx - 1) * alpha;
-          else if (f < -MAX_EXP) then g = (labelx - 0) * alpha;
-          else g = (labelx - expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int]) * alpha;
-          for c in LayerSpace do neu1e[c] += g * network.syn1neg[id,c + l2];
-          for c in LayerSpace do network.syn1neg[id,c + l2] += g * neu1[c];
-        }
-        // hidden -> in
-        for a in b..(window * 2 - b) do if (a != window) {
-          c = sentence_position - window + a;
-          if (c < 0) then continue;
-          if (c >= sentence_length) then continue;
-          last_word = sen[c];
-          if (last_word == -1) then continue;
-          for c in LayerSpace do network.syn0[id,c + last_word * layer1_size] += neu1e[c];
-        }
-      }
-    } else {  //train skip-gram
-      for a in b..(window * 2 - b) do if (a != window) {
-        c = sentence_position - window + a;
-        if (c < 0) then continue;
-        if (c >= sentence_length) then continue;
-        last_word = sen[c];
-        if (last_word == -1) then continue;
-        l1 = last_word * layer1_size;
-        for c in LayerSpace do neu1e[c] = 0;
-        // HIERARCHICAL SOFTMAX
-        if (hs) then for d in 0..#vocab[word].node.codelen {
-          f = 0;
-          l2 = vocab[word].node.point[d] * layer1_size;
-          // Propagate hidden -> output
-          for c in LayerSpace do f += network.syn0[id,c + l1] * network.syn1[id,c + l2];
-          if (f <= -MAX_EXP) then continue;
-          else if (f >= MAX_EXP) then continue;
-          else f = expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int];
-          // 'g' is the gradient multiplied by the learning rate
-          g = (1 - vocab[word].node.code[d] - f) * alpha;
-          // Propagate errors output -> hidden
-          for c in LayerSpace do neu1e[c] += g * network.syn1[id,c + l2];
-          // Learn weights hidden -> output
-          for c in LayerSpace do network.syn1[id,c + l2] += g * network.syn0[id,c + l1];
-        }
-        // NEGATIVE SAMPLING
-        if (negative > 0) then for d in 0..#negative {
-          if (d == 0) {
-            target = word;
-            labelx = 1;
-          } else {
-            next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
-            target = table[((next_random >> 16) % table_size:uint(64)):int];
-            if (target == 0) then target = (next_random % (vocab_size - 1):uint(64) + 1):int;
-            if (target == word) then continue;
-            labelx = 0;
-          }
-          l2 = target * layer1_size;
-          f = 0;
-          for c in LayerSpace do f += network.syn0[id,c + l1] * network.syn1neg[id,c + l2];
-          if (f > MAX_EXP) then g = (labelx - 1) * alpha;
-          else if (f < -MAX_EXP) then g = (labelx - 0) * alpha;
-          else g = (labelx - expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int]) * alpha;
-          for c in LayerSpace do neu1e[c] += g * network.syn1neg[id,c + l2];
-          for c in LayerSpace do network.syn1neg[id,c + l2] += g * network.syn0[id,c + l1];
-        }
-        // Learn weights input -> hidden
-        for c in LayerSpace do network.syn0[id,c + l1] += neu1e[c];
-      }
-    }
-    sentence_position += 1;
-    if (sentence_position >= sentence_length) {
-      sentence_length = 0;
-      continue;
-    }
-  }
-  t.stop();
-  reader.close();
-  trainFile.close();
-}
-
 proc TrainModel() {
   var a, b, c, d: int;
   var t: Timer;
@@ -695,13 +724,18 @@ proc TrainModel() {
   if (save_vocab_file != "") then SaveVocab();
   if (output_file == "") then return;
   var network = new NetworkContext(vocab_size, layer1_size, hs, negative);
-  network.InitNet();
+  network.Init();
   CreateBinaryTree();
   if (negative > 0) then InitUnigramTable();
 
   // run on a single locale using all threads available
-  forall i in 0..#num_threads {
-    TrainModelThread(train_file, i, network);
+  forall loc in Locales do on loc {
+    var localNetwork = new NetworkContext(vocab_size, layer1_size, hs, negative);
+    localNetwork.Clone(network);
+    forall i in 0..#num_threads {
+      local localNetwork.TrainModelThread(train_file, i);
+    }
+    network.update(localNetwork);
   }
 
   var outputFile = open(output_file, iomode.cw);
