@@ -1,3 +1,6 @@
+// The following is a "lexical" translation of the classic word2vec
+// As this is a baseline for creating a distributed version of word2vec in Chapel,
+// this translation biases towards lexical equivalence versus performance.
 use Logging, Time;
 
 const MAX_STRING = 100;
@@ -58,16 +61,32 @@ var vocabDomain = {0..#vocab_max_size};
 var vocab: [vocabDomain] VocabEntry;
 var vocab_hash: [0..#vocab_hash_size] int = -1;
 
-/*var syn0Domain: domain(1);
-var syn0: [syn0Domain] real;
-var syn1Domain: domain(1);
-var syn1: [syn1Domain] real;
-var syn1negDomain: domain(1);
-var syn1neg: [syn1negDomain] real;
+class NetworkContext {
+  var vocab_size: int;
+  var layer1_size: int;
+  var hs: int;
+  var negative: int;
+  var syn0Domain: domain(2) = {0..#numLocales,0..#(vocab_size*layer1_size)};
+  var syn0: [syn0Domain] real;
+  var syn1Domain: domain(2) = if (hs) then syn0Domain else {0..#numLocales,0..#1};
+  var syn1: [syn1Domain] real;
+  var syn1negDomain: domain(2) = if (negative) then syn0Domain else {0..#numLocales,0..#1};
+  var syn1neg: [syn1negDomain] real;
 
-var expTable: [0..#(EXP_TABLE_SIZE+1)] real;*/
-const table_size: int = 1e8:int;
-/*var table: [0..#table_size] int;*/
+  proc InitNet() {
+    var next_random: uint(64) = 1;
+    for a in 0..#vocab_size {
+      for b in LayerSpace {
+        next_random = next_random * 25214903917:uint(64) + 11;
+        syn0[0,a * layer1_size + b] = (((next_random & 0xFFFF) / 65536:real) - 0.5) / layer1_size;
+      }
+    }
+  }
+}
+
+var expTable: [0..#(EXP_TABLE_SIZE+1)] real;
+var table_size: int = 1e8:int;
+var table: [0..#table_size] int;
 
 var train_words: int = 0;
 var word_count_actual = 0;
@@ -76,7 +95,7 @@ var min_reduce = 1;
 
 var atCRLF = false;
 
-proc InitUnigramTable(ref table) {
+proc InitUnigramTable() {
   var a, i: int;
   var d1, train_words_pow: real;
   var power: real = 0.75;
@@ -463,60 +482,27 @@ proc ReadVocab() {
   for a in 0..#vocab_size do vocab[a].node = new VocabTreeNode();
 }
 
-proc InitNet(ref syn0) {
-  /*syn0Domain = {0..#vocab_size*layer1_size};
-  if (hs) then syn1Domain = syn0Domain;
-  if (negative > 0) then syn1negDomain = syn0Domain;*/
-  var next_random: uint(64) = 1;
-  for a in 0..#vocab_size {
-    for b in LayerSpace {
-      next_random = next_random * 25214903917:uint(64) + 11;
-      syn0[a * layer1_size + b] = (((next_random & 0xFFFF) / 65536:real) - 0.5) / layer1_size;
-    }
-  }
-}
-
-proc TrainModelThread(tf: string, id: int, ref gsyn0, ref gsyn1, ref gsyn1neg, ref gtable) {
+proc TrainModelThread(tf: string, tid: int, network) {
   var a, b, d, cw, word, last_word, sentence_length, sentence_position: int(64);
   var word_count, last_word_count: int(64);
   var sen: [0..#(MAX_SENTENCE_LENGTH + 1)] int;
   var l1, l2, c, target, labelx: int(64);
   var local_iter = iterations;
-  var next_random: uint(64) = id:uint(64);
+  var next_random: uint(64) = tid:uint(64);
   var f, g: real;
   var t: Timer;
   var atEOF = false;
-
-  var syn0Domain: domain(1);
-  var syn0: [syn0Domain] real;
-  var syn1Domain: domain(1);
-  var syn1: [syn1Domain] real;
-  var syn1negDomain: domain(1);
-  var syn1neg: [syn1negDomain] real;
-
-  syn0Domain = {0..#vocab_size*layer1_size};
-  if (hs) then syn1Domain = syn0Domain;
-  if (negative > 0) then syn1negDomain = syn0Domain;
-
-  forall (a,b) in zip(syn0, gsyn0) do a = b;
-
-  var expTable: [0..#(EXP_TABLE_SIZE+1)] real;
-  for i in 0..#EXP_TABLE_SIZE {
-    expTable[i] = exp((i / EXP_TABLE_SIZE:real * 2 - 1) * MAX_EXP); // Precompute the exp() table
-    expTable[i] = expTable[i] / (expTable[i] + 1);                   // Precompute f(x) = x / (x + 1)
-  }
-
-  var table: [0..#table_size] int;
-  forall (x,y) in zip(table, gtable) do x = y;
 
   var neu1: [LayerSpace] real;
   var neu1e: [LayerSpace] real;
 
   var trainFile = open(tf, iomode.r);
   var fileChunkSize = trainFile.length() / num_threads;
-  var seekStart = fileChunkSize * id;
-  var seekStop = fileChunkSize * (id + 1);
+  var seekStart = fileChunkSize * tid;
+  var seekStop = fileChunkSize * (tid + 1);
   var reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop, locking=false);
+
+  const id = here.id;
 
   t.start();
   var start = t.elapsed(TimeUnits.microseconds);
@@ -587,7 +573,7 @@ proc TrainModelThread(tf: string, id: int, ref gsyn0, ref gsyn1, ref gsyn1neg, r
         if (c >= sentence_length) then continue;
         last_word = sen[c];
         if (last_word == -1) then continue;
-        for c in LayerSpace do neu1[c] += syn0[c + last_word * layer1_size];
+        for c in LayerSpace do neu1[c] += network.syn0[id,c + last_word * layer1_size];
         cw += 1;
       }
       if (cw) {
@@ -596,16 +582,16 @@ proc TrainModelThread(tf: string, id: int, ref gsyn0, ref gsyn1, ref gsyn1neg, r
           f = 0;
           l2 = vocab[word].node.point[d] * layer1_size;
           // Propagate hidden -> output
-          for c in LayerSpace do f += neu1[c] * syn1[c + l2];
+          for c in LayerSpace do f += neu1[c] * network.syn1[id,c + l2];
           if (f <= -MAX_EXP) then continue;
           else if (f >= MAX_EXP) then continue;
           else f = expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int];
           // 'g' is the gradient multiplied by the learning rate
           g = (1 - vocab[word].node.code[d] - f) * alpha;
           // Propagate errors output -> hidden
-          for c in LayerSpace do neu1e[c] += g * syn1[c + l2];
+          for c in LayerSpace do neu1e[c] += g * network.syn1[id,c + l2];
           // Learn weights hidden -> output
-          for c in LayerSpace do syn1[c + l2] += g * neu1[c];
+          for c in LayerSpace do network.syn1[id,c + l2] += g * neu1[c];
         }
         // NEGATIVE SAMPLING
         if (negative > 0) then for d in 0..#(negative + 1) {
@@ -621,12 +607,12 @@ proc TrainModelThread(tf: string, id: int, ref gsyn0, ref gsyn1, ref gsyn1neg, r
           }
           l2 = target * layer1_size;
           f = 0;
-          for c in LayerSpace do f += neu1[c] * syn1neg[c + l2];
+          for c in LayerSpace do f += neu1[c] * network.syn1neg[id,c + l2];
           if (f > MAX_EXP) then g = (labelx - 1) * alpha;
           else if (f < -MAX_EXP) then g = (labelx - 0) * alpha;
           else g = (labelx - expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int]) * alpha;
-          for c in LayerSpace do neu1e[c] += g * syn1neg[c + l2];
-          for c in LayerSpace do syn1neg[c + l2] += g * neu1[c];
+          for c in LayerSpace do neu1e[c] += g * network.syn1neg[id,c + l2];
+          for c in LayerSpace do network.syn1neg[id,c + l2] += g * neu1[c];
         }
         // hidden -> in
         for a in b..(window * 2 - b) do if (a != window) {
@@ -635,7 +621,7 @@ proc TrainModelThread(tf: string, id: int, ref gsyn0, ref gsyn1, ref gsyn1neg, r
           if (c >= sentence_length) then continue;
           last_word = sen[c];
           if (last_word == -1) then continue;
-          for c in LayerSpace do syn0[c + last_word * layer1_size] += neu1e[c];
+          for c in LayerSpace do network.syn0[id,c + last_word * layer1_size] += neu1e[c];
         }
       }
     } else {  //train skip-gram
@@ -652,16 +638,16 @@ proc TrainModelThread(tf: string, id: int, ref gsyn0, ref gsyn1, ref gsyn1neg, r
           f = 0;
           l2 = vocab[word].node.point[d] * layer1_size;
           // Propagate hidden -> output
-          for c in LayerSpace do f += syn0[c + l1] * syn1[c + l2];
+          for c in LayerSpace do f += network.syn0[id,c + l1] * network.syn1[id,c + l2];
           if (f <= -MAX_EXP) then continue;
           else if (f >= MAX_EXP) then continue;
           else f = expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int];
           // 'g' is the gradient multiplied by the learning rate
           g = (1 - vocab[word].node.code[d] - f) * alpha;
           // Propagate errors output -> hidden
-          for c in LayerSpace do neu1e[c] += g * syn1[c + l2];
+          for c in LayerSpace do neu1e[c] += g * network.syn1[id,c + l2];
           // Learn weights hidden -> output
-          for c in LayerSpace do syn1[c + l2] += g * syn0[c + l1];
+          for c in LayerSpace do network.syn1[id,c + l2] += g * network.syn0[id,c + l1];
         }
         // NEGATIVE SAMPLING
         if (negative > 0) then for d in 0..#negative {
@@ -677,15 +663,15 @@ proc TrainModelThread(tf: string, id: int, ref gsyn0, ref gsyn1, ref gsyn1neg, r
           }
           l2 = target * layer1_size;
           f = 0;
-          for c in LayerSpace do f += syn0[c + l1] * syn1neg[c + l2];
+          for c in LayerSpace do f += network.syn0[id,c + l1] * network.syn1neg[id,c + l2];
           if (f > MAX_EXP) then g = (labelx - 1) * alpha;
           else if (f < -MAX_EXP) then g = (labelx - 0) * alpha;
           else g = (labelx - expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int]) * alpha;
-          for c in LayerSpace do neu1e[c] += g * syn1neg[c + l2];
-          for c in LayerSpace do syn1neg[c + l2] += g * syn0[c + l1];
+          for c in LayerSpace do neu1e[c] += g * network.syn1neg[id,c + l2];
+          for c in LayerSpace do network.syn1neg[id,c + l2] += g * network.syn0[id,c + l1];
         }
         // Learn weights input -> hidden
-        for c in LayerSpace do syn0[c + l1] += neu1e[c];
+        for c in LayerSpace do network.syn0[id,c + l1] += neu1e[c];
       }
     }
     sentence_position += 1;
@@ -708,27 +694,14 @@ proc TrainModel() {
   if (read_vocab_file != "") then ReadVocab(); else LearnVocabFromTrainFile();
   if (save_vocab_file != "") then SaveVocab();
   if (output_file == "") then return;
-
-  var syn0Domain: domain(1);
-  var syn0: [syn0Domain] real;
-  var syn1Domain: domain(1);
-  var syn1: [syn1Domain] real;
-  var syn1negDomain: domain(1);
-  var syn1neg: [syn1negDomain] real;
-
-  syn0Domain = {0..#vocab_size*layer1_size};
-  if (hs) then syn1Domain = syn0Domain;
-  if (negative > 0) then syn1negDomain = syn0Domain;
-
-  var table: [0..#table_size] int;
-
-  InitNet(syn0);
+  var network = new NetworkContext(vocab_size, layer1_size, hs, negative);
+  network.InitNet();
   CreateBinaryTree();
-  if (negative > 0) then InitUnigramTable(table);
+  if (negative > 0) then InitUnigramTable();
 
   // run on a single locale using all threads available
   forall i in 0..#num_threads {
-    TrainModelThread(train_file, i, syn0, syn1, syn1neg, table);
+    TrainModelThread(train_file, i, network);
   }
 
   var outputFile = open(output_file, iomode.cw);
@@ -742,8 +715,8 @@ proc TrainModel() {
         writer.writef("%c", vw.word[j]);
       }
       writer.write(" ");
-      if (binary) then for b in LayerSpace do writer.writef("%|4r", syn0[a * layer1_size + b]);
-      else for b in LayerSpace do writer.write(syn0[a * layer1_size + b], " ");
+      if (binary) then for b in LayerSpace do writer.writef("%|4r", network.syn0[0,a * layer1_size + b]);
+      else for b in LayerSpace do writer.write(network.syn0[0,a * layer1_size + b], " ");
       writer.writeln();
     }
   } else {
@@ -761,7 +734,7 @@ proc TrainModel() {
       for b in 0..#(clcn * layer1_size) do cent[b] = 0;
       for b in 0..#clcn do centcn[b] = 1;
       for c in 0..#vocab_size {
-        for d in LayerSpace do cent[layer1_size * cl[c] + d] += syn0[c * layer1_size + d];
+        for d in LayerSpace do cent[layer1_size * cl[c] + d] += network.syn0[0,c * layer1_size + d];
         centcn[cl[c]] += 1;
       }
       for b in 0..#clcn {
@@ -778,7 +751,7 @@ proc TrainModel() {
         closeid = 0;
         for d in 0..#clcn {
           x = 0;
-          for b in LayerSpace do x += cent[layer1_size * d + b] * syn0[c * layer1_size + b];
+          for b in LayerSpace do x += cent[layer1_size * d + b] * network.syn0[0,c * layer1_size + b];
           if (x > closev) {
             closev = x;
             closeid = d;
@@ -823,9 +796,9 @@ inline proc wordToInt(word: [?] uint(8), len: int): int {
 }
 
 proc main() {
-  /*for i in 0..#EXP_TABLE_SIZE {
+  for i in 0..#EXP_TABLE_SIZE {
     expTable[i] = exp((i / EXP_TABLE_SIZE:real * 2 - 1) * MAX_EXP); // Precompute the exp() table
     expTable[i] = expTable[i] / (expTable[i] + 1);                   // Precompute f(x) = x / (x + 1)
-  }*/
+  }
   TrainModel();
 }
