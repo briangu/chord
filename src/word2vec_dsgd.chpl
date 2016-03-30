@@ -39,27 +39,24 @@ const LayerSpace = {0..#layer1_size};
 
 const num_threads = here.maxTaskPar;
 
-class VocabWord {
-  var len: int = MAX_STRING;
-  var word: [0..#len] uint(8);
-}
+record VocabEntry {
+  var len: int;
+  var word: [0..#MAX_STRING] uint(8);
+  var cn: int(64);
+};
 
-class VocabTreeNode {
+record VocabTreeEntry {
   var codelen: uint(8);
   var code: [0..#MAX_CODE_LENGTH] uint(8);
   var point: [0..#MAX_CODE_LENGTH] int;
-}
-
-record VocabEntry {
-  var word: VocabWord = nil;
-  var cn: int(64);
-  var node: VocabTreeNode;
 };
 
 var vocab_size = 0;
 var vocabDomain = {0..#vocab_max_size};
 var vocab: [vocabDomain] VocabEntry;
 var vocab_hash: [0..#vocab_hash_size] int = -1;
+var vocabTreeDomain: domain(1);
+var vocab_tree: [vocabTreeDomain] VocabTreeEntry;
 
 var expTable: [0..#(EXP_TABLE_SIZE+1)] real;
 var table_size: int = 1e8:int;
@@ -219,16 +216,16 @@ class NetworkContext {
         }
         if (cw) {
           for c in LayerSpace do neu1[c] /= cw;
-          if (hs) then for d in 0..#vocab[word].node.codelen {
+          if (hs) then for d in 0..#vocab_tree[word].codelen {
             f = 0;
-            l2 = vocab[word].node.point[d] * layer1_size;
+            l2 = vocab_tree[word].point[d] * layer1_size;
             // Propagate hidden -> output
             for c in LayerSpace do f += neu1[c] * syn1[id,c + l2];
             if (f <= -MAX_EXP) then continue;
             else if (f >= MAX_EXP) then continue;
             else f = expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int];
             // 'g' is the gradient multiplied by the learning rate
-            g = (1 - vocab[word].node.code[d] - f) * alpha;
+            g = (1 - vocab_tree[word].code[d] - f) * alpha;
             // Propagate errors output -> hidden
             for c in LayerSpace do neu1e[c] += g * syn1[id,c + l2];
             // Learn weights hidden -> output
@@ -275,16 +272,16 @@ class NetworkContext {
           l1 = last_word * layer1_size;
           for c in LayerSpace do neu1e[c] = 0;
           // HIERARCHICAL SOFTMAX
-          if (hs) then for d in 0..#vocab[word].node.codelen {
+          if (hs) then for d in 0..#vocab_tree[word].codelen {
             f = 0;
-            l2 = vocab[word].node.point[d] * layer1_size;
+            l2 = vocab_tree[word].point[d] * layer1_size;
             // Propagate hidden -> output
             for c in LayerSpace do f += syn0[id,c + l1] * syn1[id,c + l2];
             if (f <= -MAX_EXP) then continue;
             else if (f >= MAX_EXP) then continue;
             else f = expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int];
             // 'g' is the gradient multiplied by the learning rate
-            g = (1 - vocab[word].node.code[d] - f) * alpha;
+            g = (1 - vocab_tree[word].code[d] - f) * alpha;
             // Propagate errors output -> hidden
             for c in LayerSpace do neu1e[c] += g * syn1[id,c + l2];
             // Learn weights hidden -> output
@@ -376,10 +373,6 @@ proc ReadWord(word: [?] uint(8), reader): int {
   return a;
 }
 
-inline proc GetWordHash(word: VocabWord): int {
-  return GetWordHash(word.word, word.len);
-}
-
 inline proc GetWordHash(word: [?] uint(8), len: int): int {
   var hash: uint = 0;
   for ch in 0..#len do hash = hash * 257 + word[ch]: uint;
@@ -393,11 +386,11 @@ proc SearchVocab(word: [?D] uint(8), len: int): int {
 
   while (1) {
     if (vocab_hash[hash] == -1) then return -1;
-    var vw = vocab[vocab_hash[hash]].word;
-    if (len == vw.len) {
+    const wordIdx = vocab_hash[hash];
+    if (len == vocab[wordIdx].len) {
       var found = true;
       for i in 0..#len {
-        if (word[i] != vw.word[i]) {
+        if (word[i] != vocab[wordIdx].word[i]) {
           found = false;
           break;
         }
@@ -420,10 +413,10 @@ proc ReadWordIndex(reader): int {
 // Adds a word to the vocabulary
 proc AddWordToVocab(word: [?D] uint(8), length: int): int {
   var len = if (length > MAX_STRING) then MAX_STRING else length;
-  var vw = new VocabWord(len);
-  for i in 0..#len do vw.word[i] = word[i];
-  vocab[vocab_size].word = vw;
-  vocab[vocab_size].cn = 0;
+  const wordIdx = vocab_size;
+  for i in 0..#len do vocab[wordIdx].word[i] = word[i];
+  vocab[wordIdx].len = len;
+  vocab[wordIdx].cn = 0;
   vocab_size += 1;
   // Reallocate memory if needed
   if (vocab_size + 2 >= vocab_max_size) {
@@ -521,12 +514,11 @@ proc SortVocab() {
     // Words occuring less than min_count times will be discarded from the vocab
     if ((vocab[a].cn < min_count) && (a != 0)) {
       vocab_size -= 1;
-      delete vocab[a].word;
-      /*vocab[a].word = nil;
-      vocab[a].cn = 0;*/
+      vocab[a].len = 0;
+      vocab[a].cn = 0;
     } else {
       // Hash will be re-computed, as after the sorting it is not actual
-      hash = GetWordHash(vocab[a].word);
+      hash = GetWordHash(vocab[a].word, vocab[a].len);
       while (vocab_hash[hash] != -1) do hash = (hash + 1) % vocab_hash_size;
       vocab_hash[hash] = a;
       train_words += vocab[a].cn;
@@ -534,7 +526,7 @@ proc SortVocab() {
   }
   vocabDomain = {0..#(vocab_size + 1)};
   // Allocate memory for the binary tree construction
-  for a in 0..#vocab_size do vocab[a].node = new VocabTreeNode();
+  vocabTreeDomain = vocabDomain;
 }
 
 proc ReduceVocab() {
@@ -544,13 +536,14 @@ proc ReduceVocab() {
     vocab[b].word = vocab[a].word;
     b += 1;
   } else {
-    delete vocab[a].word;
+    vocab[a].len = 0;
+    vocab[a].cn = 0;
   }
   vocab_size = b;
   for a in 0..#vocab_hash_size do vocab_hash[a] = -1;
   for a in 0..#vocab_size {
     // Hash will be re-computed, as it is not actual
-    var hash = GetWordHash(vocab[a].word);
+    var hash = GetWordHash(vocab[a].word, vocab[a].len);
     while (vocab_hash[hash] != -1) do hash = (hash + 1) % vocab_hash_size;
     vocab_hash[hash] = a;
   }
@@ -612,11 +605,11 @@ proc CreateBinaryTree() {
       b = parent_node[b];
       if (b == vocab_size * 2 - 2) then break;
     }
-    vocab[a].node.codelen = i: uint(8);
-    vocab[a].node.point[0] = vocab_size - 2;
+    vocab_tree[a].codelen = i: uint(8);
+    vocab_tree[a].point[0] = vocab_size - 2;
     for b in 0..#i {
-      vocab[a].node.code[i - b - 1] = code[b];
-      vocab[a].node.point[i - b] = point[b] - vocab_size;
+      vocab_tree[a].code[i - b - 1] = code[b];
+      vocab_tree[a].point[i - b] = point[b] - vocab_size;
     }
   }
 }
@@ -665,8 +658,7 @@ proc SaveVocab() {
   var f = open(save_vocab_file, iomode.cw);
   var w = f.writer(locking=false);
   for i in 0..#vocab_size {
-    var vw = vocab[i].word;
-    for j in 0..#vw.len do w.writef("%c", vw.word[j]);
+    for j in 0..#vocab[i].len do w.writef("%c", vocab[i].word[j]);
     w.writeln(" ", vocab[i].cn);
   }
   w.close();
@@ -711,7 +703,7 @@ proc ReadVocab() {
     writeln("Vocab size: ", vocab_size);
     writeln("Words in train file: ", train_words);
   }
-  for a in 0..#vocab_size do vocab[a].node = new VocabTreeNode();
+  vocabTreeDomain = vocabDomain;
 }
 
 proc TrainModel() {
@@ -744,9 +736,8 @@ proc TrainModel() {
     // Save the word vectors
     writer.writeln(vocab_size, " ", layer1_size);
     for a in 0..#vocab_size {
-      var vw = vocab[a].word;
-      for j in 0..#vw.len {
-        writer.writef("%c", vw.word[j]);
+      for j in 0..#vocab[a].len {
+        writer.writef("%c", vocab[a].word[j]);
       }
       writer.write(" ");
       if (binary) then for b in LayerSpace do writer.writef("%|4r", network.syn0[0,a * layer1_size + b]);
@@ -796,8 +787,7 @@ proc TrainModel() {
     }
     // Save the K-means classes
     for a in 0..#vocab_size {
-      var vw = vocab[a].word;
-      for j in 0..#vw.len do writer.writef("%c", vw.word[j]);
+      for j in 0..#vocab[a].len do writer.writef("%c", vocab[a].word[j]);
       writer.write(" ");
       if (binary) then writer.writef("%|4i", cl[a]);
       else writer.write(cl[a]);
