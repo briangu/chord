@@ -118,6 +118,9 @@ class VocabContext {
     this.vocab_hash[0..#vocab_hash_size] = vocabContext.vocab_hash[0..#vocab_hash_size];
     this.vocabTreeDomain = {vocabContext.vocabTreeDomain.low..vocabContext.vocabTreeDomain.high};
     this.vocab_tree[vocabTreeDomain] = vocabContext.vocab_tree[vocabTreeDomain];
+    this.train_words = vocabContext.train_words;
+    this.min_reduce = vocabContext.min_reduce;
+    this.table[0..#table_size] = vocabContext.table[0..#table_size];
   }
 
   proc InitUnigramTable() {
@@ -818,11 +821,11 @@ proc TrainModel() {
 
   // run on a single locale using all threads available
   for loc in Locales do on loc {
-    /*var localVocab = new VocabContext();
-    localVocab.clone(vocabContext);*/
-    var localNetwork = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
+    var localVocab = new VocabContext();
+    localVocab.clone(vocabContext);
+    var localNetwork = new NetworkContext(localVocab, layer1_size, hs, negative, alpha);
     localNetwork.Clone(network);
-    var referenceNetwork = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
+    var referenceNetwork = new NetworkContext(localVocab, layer1_size, hs, negative, alpha);
     referenceNetwork.Clone(localNetwork);
     for batch in 0..#iterations by batch_size {
       forall i in 0..#num_threads {
@@ -830,7 +833,7 @@ proc TrainModel() {
       }
       network.update(localNetwork, referenceNetwork);
     }
-    reportStats(sumWordCountActual(), vocabContext.train_words, localNetwork.alpha);
+    reportStats(sumWordCountActual(), localVocab.train_words, localNetwork.alpha);
   }
 
   var outputFile = open(output_file, iomode.cw);
