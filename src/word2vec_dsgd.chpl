@@ -579,16 +579,29 @@ class NetworkContext {
     InitExpTable();
   }
 
-  proc update(networkContext: NetworkContext) {
+  proc update(latest: NetworkContext, reference: NetworkContext) {
     /*if (this.syn0Domain == networkContext.syn0Domain) then halt("syn0Domain not equal");
     if (this.syn1Domain == networkContext.syn1Domain) then halt("syn0Domain not equal");
     if (this.syn1negDomain == networkContext.syn1negDomain) then halt("syn0Domain not equal");*/
-    /*syn0 += reference.syn0 - latest.syn0;
-    syn1 += reference.syn1 - latest.syn1;
-    syn1neg += reference.syn1neg - latest.syn1neg;*/
-    this.syn0[this.syn0Domain] = networkContext.syn0[this.syn0Domain];
+    /*this.syn0[this.syn0Domain] = networkContext.syn0[this.syn0Domain];
     this.syn1[this.syn1Domain] = networkContext.syn1[this.syn1Domain];
-    this.syn1neg[this.syn1negDomain] = networkContext.syn1neg[this.syn1negDomain];
+    this.syn1neg[this.syn1negDomain] = networkContext.syn1neg[this.syn1negDomain];*/
+
+    // reuse the reference to compute the gradient
+    reference.syn0[syn0Domain] -= latest.syn0[syn0Domain];
+    syn0[syn0Domain] += reference.syn0;
+    reference.syn0[syn0Domain] = syn0[syn0Domain];
+    latest.syn0[syn0Domain] = reference.syn0[syn0Domain];
+
+    reference.syn1[syn1Domain] -= latest.syn0[syn1Domain];
+    syn1[syn0Domain] += reference.syn1;
+    reference.syn1[syn0Domain] = syn1[syn0Domain];
+    latest.syn1[syn0Domain] = reference.syn1[syn0Domain];
+
+    reference.syn1neg[syn1negDomain] -= latest.syn0[syn1negDomain];
+    syn1neg[syn0Domain] += reference.syn1neg;
+    reference.syn1neg[syn0Domain] = syn1neg[syn0Domain];
+    latest.syn1neg[syn0Domain] = reference.syn1neg[syn0Domain];
   }
 
   proc TrainModelThread(tf: string, tid: int) {
@@ -807,10 +820,12 @@ proc TrainModel() {
   forall loc in Locales do on loc {
     var localNetwork = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
     localNetwork.Clone(network);
+    var referenceNetwork = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
+    referenceNetwork.Clone(localNetwork);
     forall i in 0..#num_threads {
       local localNetwork.TrainModelThread(train_file, i);
     }
-    network.update(localNetwork);
+    network.update(localNetwork, referenceNetwork);
     reportStats(sumWordCountActual(), vocabContext.train_words, localNetwork.alpha);
   }
 
