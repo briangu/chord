@@ -114,10 +114,10 @@ class VocabContext {
     this.vocab_size = vocabContext.vocab_size;
     this.vocab_max_size = vocabContext.vocab_max_size;
     this.vocabDomain = {vocabContext.vocabDomain.low..vocabContext.vocabDomain.high};
-    this.vocab[this.vocabDomain] = vocabContext.vocab[this.vocabDomain];
+    this.vocab[vocabDomain] = vocabContext.vocab[vocabDomain];
     this.vocab_hash[0..#vocab_hash_size] = vocabContext.vocab_hash[0..#vocab_hash_size];
     this.vocabTreeDomain = {vocabContext.vocabTreeDomain.low..vocabContext.vocabTreeDomain.high};
-    this.vocab_tree[this.vocabTreeDomain] = vocabContext.vocab_tree[this.vocabTreeDomain];
+    this.vocab_tree[vocabTreeDomain] = vocabContext.vocab_tree[vocabTreeDomain];
   }
 
   proc InitUnigramTable() {
@@ -590,19 +590,19 @@ class NetworkContext {
 
     // reuse the reference to compute the gradient
     reference.syn0[syn0Domain] -= latest.syn0[syn0Domain];
-    syn0[syn0Domain] += reference.syn0;
+    syn0[syn0Domain] += reference.syn0[syn0Domain];
     reference.syn0[syn0Domain] = syn0[syn0Domain];
     latest.syn0[syn0Domain] = reference.syn0[syn0Domain];
 
-    reference.syn1[syn1Domain] -= latest.syn0[syn1Domain];
-    syn1[syn0Domain] += reference.syn1;
-    reference.syn1[syn0Domain] = syn1[syn0Domain];
-    latest.syn1[syn0Domain] = reference.syn1[syn0Domain];
+    reference.syn1[syn1Domain] -= latest.syn1[syn1Domain];
+    syn1[syn1Domain] += reference.syn1[syn1Domain];
+    reference.syn1[syn1Domain] = syn1[syn1Domain];
+    latest.syn1[syn1Domain] = reference.syn1[syn1Domain];
 
-    reference.syn1neg[syn1negDomain] -= latest.syn0[syn1negDomain];
-    syn1neg[syn0Domain] += reference.syn1neg;
-    reference.syn1neg[syn0Domain] = syn1neg[syn0Domain];
-    latest.syn1neg[syn0Domain] = reference.syn1neg[syn0Domain];
+    reference.syn1neg[syn1negDomain] -= latest.syn1neg[syn1negDomain];
+    syn1neg[syn1negDomain] += reference.syn1neg[syn1negDomain];
+    reference.syn1neg[syn1negDomain] = syn1neg[syn1negDomain];
+    latest.syn1neg[syn1negDomain] = reference.syn1neg[syn1negDomain];
   }
 
   proc TrainModelThread(tf: string, tid: int, batch_size: int) {
@@ -633,7 +633,7 @@ class NetworkContext {
         word_count_actual[id,tid] += word_count - last_word_count;
         last_word_count = word_count;
         var sum = sumWordCountActual();
-        if tid == 0 then reportStats(sum, train_words, alpha);
+        if id == 0 && tid == 0 then reportStats(sum, train_words, alpha);
         alpha = starting_alpha * (1 - sum / (iterations * train_words + 1):real);
         if (alpha < starting_alpha * 0.0001) then alpha = starting_alpha * 0.0001;
       }
@@ -688,7 +688,6 @@ class NetworkContext {
           if (c >= sentence_length) then continue;
           last_word = sen[c];
           if (last_word == -1) then continue;
-          /*local forall (c,d) in zip(0..#layer1_size,(last_word*layer1_size)..#layer1_size) do neu1[c] += syn0[id,d];*/
           for c in LayerSpace do neu1[c] += syn0[id,c + last_word * layer1_size];
           cw += 1;
         }
@@ -818,18 +817,20 @@ proc TrainModel() {
   startStats();
 
   // run on a single locale using all threads available
-  forall loc in Locales do on loc {
-    var localNetwork = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
+  for loc in Locales do on loc {
+    var localVocab = new VocabContext();
+    localVocab.clone(vocabContext);
+    var localNetwork = new NetworkContext(localVocab, layer1_size, hs, negative, alpha);
     localNetwork.Clone(network);
-    var referenceNetwork = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
+    var referenceNetwork = new NetworkContext(localVocab, layer1_size, hs, negative, alpha);
     referenceNetwork.Clone(localNetwork);
     for batch in 0..#iterations by batch_size {
       forall i in 0..#num_threads {
-        local localNetwork.TrainModelThread(train_file, i, batch_size);
+        localNetwork.TrainModelThread(train_file.localize(), i, batch_size);
       }
       network.update(localNetwork, referenceNetwork);
     }
-    reportStats(sumWordCountActual(), vocabContext.train_words, localNetwork.alpha);
+    reportStats(sumWordCountActual(), localVocab.train_words, localNetwork.alpha);
   }
 
   var outputFile = open(output_file, iomode.cw);
