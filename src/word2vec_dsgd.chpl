@@ -29,6 +29,7 @@ config var alpha = 0.025 * 2;
 config const sample = 1e-3;
 config const size = 100;
 config const debug_mode = 2;
+config const num_threads = here.maxTaskPar;
 
 const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
@@ -37,7 +38,47 @@ const CRLF = ascii('\n'): uint(8);
 const layer1_size = size;
 const LayerSpace = {0..#layer1_size};
 
-const num_threads = here.maxTaskPar;
+const MyLocaleView = {0..#numLocales, 1..1};
+const MyLocales: [MyLocaleView] locale = reshape(Locales, MyLocaleView);
+
+var word_count_actual_domain = {0..#numLocales, 0..#num_threads};
+var word_count_actual_domain_space = word_count_actual_domain dmapped Block(boundingBox=word_count_actual_domain, targetLocales=MyLocales);
+var word_count_actual: [word_count_actual_domain_space] int;
+
+var statsTimer: Timer;
+var statsTimerStart: real(64);
+var lastTimerValue: real(64);
+
+proc startStats() {
+  statsTimer.start();
+  statsTimerStart = statsTimer.elapsed(TimeUnits.microseconds);
+  lastTimerValue = statsTimerStart;
+}
+
+proc sumWordCountActual(): int {
+  var sum: int;
+  for i in 0..#numLocales {
+    for j in 0..#num_threads {
+      sum += word_count_actual[i,j];
+    }
+  }
+  return sum;
+}
+
+proc reportStats(sum, train_words, alpha) {
+  var now = statsTimer.elapsed(TimeUnits.milliseconds);
+  if ((now - lastTimerValue) > 1000) {
+    lastTimerValue = now;
+    if (sum > 0) {
+      writef("\rAlpha: %r  Progress: %0.2r%%  Words/sec: %rk  Words/thread/sec: %rk  ",
+            alpha,
+            (sum / (iterations * train_words + 1):real) * 100,
+            sum / ((now + 1) / 1000) / 1000,
+            sum / (numLocales * num_threads) / ((now + 1) / 1000) / 1000);
+      stdout.flush();
+    }
+  }
+}
 
 record VocabEntry {
   var len: int;
@@ -482,22 +523,16 @@ class VocabContext {
   }
 }
 
-var expTable: [0..#(EXP_TABLE_SIZE+1)] real;
-
-var word_count_actual = 0;
-var starting_alpha: real;
-
 class NetworkContext {
   var vocabContext: VocabContext;
   var layer1_size: int;
   var hs: int;
   var negative: int;
+  var alpha: real;
+  const starting_alpha: real = alpha;
 
   const vocab_size = vocabContext.vocab_size;
   const train_words = vocabContext.train_words;
-
-  const MyLocaleView = {0..#numLocales, 1..1};
-  const MyLocales: [MyLocaleView] locale = reshape(Locales, MyLocaleView);
 
   const syn0Domain: domain(2) = {0..#numLocales,0..#(vocab_size*layer1_size)};
   /*const syn0DomainSpace = syn0Domain dmapped Block(boundingBox=syn0Domain,targetLocales=MyLocales);*/
@@ -509,7 +544,16 @@ class NetworkContext {
   /*const syn1negDomainSpace = syn1negDomain dmapped Block(boundingBox=syn1negDomain,targetLocales=MyLocales);*/
   var syn1neg: [syn1negDomain] real;
 
-  proc Init() {
+  var expTable: [0..#(EXP_TABLE_SIZE+1)] real;
+
+  proc InitExpTable() {
+    for i in 0..#EXP_TABLE_SIZE {
+      expTable[i] = exp((i / EXP_TABLE_SIZE:real * 2 - 1) * MAX_EXP); // Precompute the exp() table
+      expTable[i] = expTable[i] / (expTable[i] + 1);                   // Precompute f(x) = x / (x + 1)
+    }
+  }
+
+  proc RandomizeNetwork() {
     var next_random: uint(64) = 1;
     for a in 0..#vocab_size {
       for b in LayerSpace {
@@ -519,6 +563,11 @@ class NetworkContext {
     }
   }
 
+  proc Init() {
+    InitExpTable();
+    RandomizeNetwork();
+  }
+
   proc Clone(networkContext: NetworkContext) {
     /*if (this.syn0Domain == networkContext.syn0Domain) then halt("syn0Domain not equal");
     if (this.syn1Domain == networkContext.syn1Domain) then halt("syn0Domain not equal");
@@ -526,6 +575,8 @@ class NetworkContext {
     this.syn0[this.syn0Domain] = networkContext.syn0[this.syn0Domain];
     this.syn1[this.syn1Domain] = networkContext.syn1[this.syn1Domain];
     this.syn1neg[this.syn1negDomain] = networkContext.syn1neg[this.syn1negDomain];
+
+    InitExpTable();
   }
 
   proc update(networkContext: NetworkContext) {
@@ -548,36 +599,28 @@ class NetworkContext {
     var local_iter = iterations;
     var next_random: uint(64) = tid:uint(64);
     var f, g: real;
-    var t: Timer;
     var atEOF = false;
+
+    const id = here.id;
+    const wordsPerTask = (train_words / (numLocales * num_threads));
 
     var neu1: [LayerSpace] real;
     var neu1e: [LayerSpace] real;
 
     var trainFile = open(tf, iomode.r);
-    var fileChunkSize = trainFile.length() / num_threads;
-    var seekStart = fileChunkSize * tid;
-    var seekStop = fileChunkSize * (tid + 1);
+    var fileChunkSize = trainFile.length() / numLocales;
+    var taskFileChunkSize = fileChunkSize / num_threads;
+    var seekStart = fileChunkSize * id + taskFileChunkSize * tid;
+    var seekStop = seekStart + taskFileChunkSize;
     var reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop, locking=false);
-
-    const id = here.id;
-
-    t.start();
-    var start = t.elapsed(TimeUnits.microseconds);
 
     while (1) {
       if (word_count - last_word_count > 10000) {
-        word_count_actual += word_count - last_word_count;
+        word_count_actual[id,tid] += word_count - last_word_count;
         last_word_count = word_count;
-        if (debug_mode > 1) {
-          var now = t.elapsed(TimeUnits.milliseconds);
-          writef("\rAlpha: %r  Progress: %0.2r%%  Words/thread/sec: %rk  ",
-                alpha,
-                (word_count_actual / (iterations * train_words + 1):real) * 100,
-                word_count_actual / ((now - start + 1) / 1000) / 1000);
-          stdout.flush();
-        }
-        alpha = starting_alpha * (1 - word_count_actual / (iterations * train_words + 1):real);
+        var sum = sumWordCountActual();
+        if tid == 0 then reportStats(sum, train_words, alpha);
+        alpha = starting_alpha * (1 - sum / (iterations * train_words + 1):real);
         if (alpha < starting_alpha * 0.0001) then alpha = starting_alpha * 0.0001;
       }
       if (sentence_length == 0) {
@@ -602,8 +645,8 @@ class NetworkContext {
         }
         sentence_position = 0;
       }
-      if (atEOF || (word_count > train_words / num_threads)) {
-        word_count_actual += word_count - last_word_count;
+      if (atEOF || (word_count > wordsPerTask)) {
+        word_count_actual[id,tid] += word_count - last_word_count;
         local_iter -= 1;
         if (local_iter == 0) then break;
         word_count = 0;
@@ -739,7 +782,6 @@ class NetworkContext {
         continue;
       }
     }
-    t.stop();
     reader.close();
     trainFile.close();
   }
@@ -750,24 +792,26 @@ proc TrainModel() {
   var t: Timer;
 
   info("Starting training using file ", train_file);
-  starting_alpha = alpha;
   var vocabContext = new VocabContext();
   if (read_vocab_file != "") then vocabContext.ReadVocab(read_vocab_file); else vocabContext.LearnVocabFromTrainFile(train_file);
   if (save_vocab_file != "") then vocabContext.SaveVocab(save_vocab_file);
   if (output_file == "") then return;
   vocabContext.CreateBinaryTree();
   if (negative > 0) then vocabContext.InitUnigramTable();
-  var network = new NetworkContext(vocabContext, layer1_size, hs, negative);
+  var network = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
   network.Init();
+
+  startStats();
 
   // run on a single locale using all threads available
   forall loc in Locales do on loc {
-    var localNetwork = new NetworkContext(vocabContext, layer1_size, hs, negative);
+    var localNetwork = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
     localNetwork.Clone(network);
     forall i in 0..#num_threads {
       local localNetwork.TrainModelThread(train_file, i);
     }
     network.update(localNetwork);
+    reportStats(sumWordCountActual(), vocabContext.train_words, localNetwork.alpha);
   }
 
   var outputFile = open(output_file, iomode.cw);
@@ -839,9 +883,5 @@ proc TrainModel() {
 }
 
 proc main() {
-  for i in 0..#EXP_TABLE_SIZE {
-    expTable[i] = exp((i / EXP_TABLE_SIZE:real * 2 - 1) * MAX_EXP); // Precompute the exp() table
-    expTable[i] = expTable[i] / (expTable[i] + 1);                   // Precompute f(x) = x / (x + 1)
-  }
   TrainModel();
 }
