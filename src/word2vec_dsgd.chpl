@@ -818,11 +818,11 @@ proc TrainModel() {
 
   // run on a single locale using all threads available
   for loc in Locales do on loc {
-    var localVocab = new VocabContext();
-    localVocab.clone(vocabContext);
-    var localNetwork = new NetworkContext(localVocab, layer1_size, hs, negative, alpha);
+    /*var localVocab = new VocabContext();
+    localVocab.clone(vocabContext);*/
+    var localNetwork = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
     localNetwork.Clone(network);
-    var referenceNetwork = new NetworkContext(localVocab, layer1_size, hs, negative, alpha);
+    var referenceNetwork = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
     referenceNetwork.Clone(localNetwork);
     for batch in 0..#iterations by batch_size {
       forall i in 0..#num_threads {
@@ -830,7 +830,7 @@ proc TrainModel() {
       }
       network.update(localNetwork, referenceNetwork);
     }
-    reportStats(sumWordCountActual(), localVocab.train_words, localNetwork.alpha);
+    reportStats(sumWordCountActual(), vocabContext.train_words, localNetwork.alpha);
   }
 
   var outputFile = open(output_file, iomode.cw);
