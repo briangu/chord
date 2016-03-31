@@ -20,7 +20,8 @@ config const read_vocab_file = "";
 config const output_file: string = "";
 config const hs = 0;
 config const negative = 5;
-config const iterations = 5;
+config const iterations = 6;
+config const batch_size = 2;
 config const window = 5;
 config const cbow = 1;
 config const binary = 0;
@@ -604,12 +605,12 @@ class NetworkContext {
     latest.syn1neg[syn0Domain] = reference.syn1neg[syn0Domain];
   }
 
-  proc TrainModelThread(tf: string, tid: int) {
+  proc TrainModelThread(tf: string, tid: int, batch_size: int) {
     var a, b, d, cw, word, last_word, sentence_length, sentence_position: int(64);
     var word_count, last_word_count: int(64);
     var sen: [0..#(MAX_SENTENCE_LENGTH + 1)] int;
     var l1, l2, c, target, labelx: int(64);
-    var local_iter = iterations;
+    var local_iter = batch_size;
     var next_random: uint(64) = tid:uint(64);
     var f, g: real;
     var atEOF = false;
@@ -822,10 +823,12 @@ proc TrainModel() {
     localNetwork.Clone(network);
     var referenceNetwork = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
     referenceNetwork.Clone(localNetwork);
-    forall i in 0..#num_threads {
-      local localNetwork.TrainModelThread(train_file, i);
+    for batch in 0..#iterations by batch_size {
+      forall i in 0..#num_threads {
+        local localNetwork.TrainModelThread(train_file, i, batch_size);
+      }
+      network.update(localNetwork, referenceNetwork);
     }
-    network.update(localNetwork, referenceNetwork);
     reportStats(sumWordCountActual(), vocabContext.train_words, localNetwork.alpha);
   }
 
