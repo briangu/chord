@@ -37,7 +37,6 @@ const TAB = ascii('\t'): uint(8);
 const CRLF = ascii('\n'): uint(8);
 
 const layer1_size = size;
-const LayerSpace = {0..#layer1_size};
 
 const MyLocaleView = {0..#numLocales, 1..1};
 const MyLocales: [MyLocaleView] locale = reshape(Locales, MyLocaleView);
@@ -110,11 +109,25 @@ class VocabContext {
 
   var atCRLF = false;
 
+  proc loadFromFile(train_file, read_vocab_file, save_vocab_file, negative) {
+    if (read_vocab_file != "") then ReadVocab(read_vocab_file); else LearnVocabFromTrainFile(train_file);
+    if (save_vocab_file != "") then SaveVocab(save_vocab_file);
+    CreateBinaryTree();
+    if (negative > 0) then InitUnigramTable();
+  }
+
   proc clone(vocabContext: VocabContext) {
     this.vocab_size = vocabContext.vocab_size;
     this.vocab_max_size = vocabContext.vocab_max_size;
     this.vocabDomain = {vocabContext.vocabDomain.low..vocabContext.vocabDomain.high};
-    this.vocab[vocabDomain] = vocabContext.vocab[vocabDomain];
+
+    forall i in 0..#this.vocab_size {
+      this.vocab[i].len = vocabContext.vocab[i].len;
+      /*for j in 0..#MAX_STRING do this.vocab[i].word[j] = vocabContext.vocab[i].word[j];*/
+      this.vocab[i].word[0..#this.vocab[i].len] = vocabContext.vocab[i].word[0..#this.vocab[i].len];
+      this.vocab[i].cn = vocabContext.vocab[i].cn;
+    }
+    /*this.vocab[vocabDomain] = vocabContext.vocab[vocabDomain];*/
     this.vocab_hash[0..#vocab_hash_size] = vocabContext.vocab_hash[0..#vocab_hash_size];
     this.vocabTreeDomain = {vocabContext.vocabTreeDomain.low..vocabContext.vocabTreeDomain.high};
     this.vocab_tree[vocabTreeDomain] = vocabContext.vocab_tree[vocabTreeDomain];
@@ -527,6 +540,9 @@ class VocabContext {
   }
 }
 
+var onloczeroDomain: domain(2);
+var onloczero: [onloczeroDomain] real;
+
 class NetworkContext {
   var vocabContext: VocabContext;
   var layer1_size: int;
@@ -538,17 +554,21 @@ class NetworkContext {
   const vocab_size = vocabContext.vocab_size;
   const train_words = vocabContext.train_words;
 
-  const syn0Domain: domain(2) = {0..#numLocales,0..#(vocab_size*layer1_size)};
+  const syn0Domain = {0..#1,0..#(vocab_size*layer1_size)};
   /*const syn0DomainSpace = syn0Domain dmapped Block(boundingBox=syn0Domain,targetLocales=MyLocales);*/
   var syn0: [syn0Domain] real;
-  const syn1Domain: domain(2) = if (hs) then syn0Domain else {0..#numLocales,0..#1};
+  const syn1Domain = if (hs) then syn0Domain else {0..#1,0..#1};
   /*const syn1DomainSpace = syn1Domain dmapped Block(boundingBox=syn1Domain,targetLocales=MyLocales);*/
   var syn1: [syn1Domain] real;
-  const syn1negDomain: domain(2) = if (negative) then syn0Domain else {0..#numLocales,0..#1};
+  const syn1negDomain = if (negative) then syn0Domain else {0..#1,0..#1};
   /*const syn1negDomainSpace = syn1negDomain dmapped Block(boundingBox=syn1negDomain,targetLocales=MyLocales);*/
   var syn1neg: [syn1negDomain] real;
 
   var expTable: [0..#(EXP_TABLE_SIZE+1)] real;
+
+  const LayerSpace = {0..#layer1_size};
+
+  var sum: int;
 
   proc InitExpTable() {
     for i in 0..#EXP_TABLE_SIZE {
@@ -584,26 +604,25 @@ class NetworkContext {
   }
 
   proc update(latest: NetworkContext, reference: NetworkContext) {
-    /*if (this.syn0Domain == networkContext.syn0Domain) then halt("syn0Domain not equal");
-    if (this.syn1Domain == networkContext.syn1Domain) then halt("syn0Domain not equal");
-    if (this.syn1negDomain == networkContext.syn1negDomain) then halt("syn0Domain not equal");*/
-    /*this.syn0[this.syn0Domain] = networkContext.syn0[this.syn0Domain];
-    this.syn1[this.syn1Domain] = networkContext.syn1[this.syn1Domain];
-    this.syn1neg[this.syn1negDomain] = networkContext.syn1neg[this.syn1negDomain];*/
+    if syn0.locale.id != 0 then halt("syn0.locale.id != 0");
+    if onloczero.locale.id != 0 then halt("onloczero.locale.id != 0");
 
     // reuse the reference to compute the gradient
     reference.syn0[syn0Domain] -= latest.syn0[syn0Domain];
-    syn0[syn0Domain] += reference.syn0[syn0Domain];
+    onloczero[syn0Domain] = reference.syn0[syn0Domain];
+    on Locales[0] do syn0[syn0Domain] += onloczero[syn0Domain];
     reference.syn0[syn0Domain] = syn0[syn0Domain];
     latest.syn0[syn0Domain] = reference.syn0[syn0Domain];
 
     reference.syn1[syn1Domain] -= latest.syn1[syn1Domain];
-    syn1[syn1Domain] += reference.syn1[syn1Domain];
+    onloczero[syn1Domain] = reference.syn1[syn1Domain];
+    on Locales[0] do syn1[syn1Domain] += onloczero[syn1Domain];
     reference.syn1[syn1Domain] = syn1[syn1Domain];
     latest.syn1[syn1Domain] = reference.syn1[syn1Domain];
 
     reference.syn1neg[syn1negDomain] -= latest.syn1neg[syn1negDomain];
-    syn1neg[syn1negDomain] += reference.syn1neg[syn1negDomain];
+    onloczero[syn1negDomain] = reference.syn1neg[syn1negDomain];
+    on Locales[0] do syn1neg[syn1negDomain] += onloczero[syn1negDomain];
     reference.syn1neg[syn1negDomain] = syn1neg[syn1negDomain];
     latest.syn1neg[syn1negDomain] = reference.syn1neg[syn1negDomain];
   }
@@ -635,10 +654,12 @@ class NetworkContext {
       if (word_count - last_word_count > 10000) {
         word_count_actual[id,tid] += word_count - last_word_count;
         last_word_count = word_count;
-        var sum = sumWordCountActual();
-        if id == 0 && tid == 0 then reportStats(sum, train_words, alpha);
-        alpha = starting_alpha * (1 - sum / (iterations * train_words + 1):real);
-        if (alpha < starting_alpha * 0.0001) then alpha = starting_alpha * 0.0001;
+        if tid == 0 {
+          sum = sumWordCountActual();
+          if id == 0 then reportStats(sum, train_words, alpha);
+          alpha = starting_alpha * (1 - sum / (iterations * train_words + 1):real);
+          if (alpha < starting_alpha * 0.0001) then alpha = starting_alpha * 0.0001;
+        }
       }
       if (sentence_length == 0) {
         while (1) {
@@ -691,7 +712,7 @@ class NetworkContext {
           if (c >= sentence_length) then continue;
           last_word = sen[c];
           if (last_word == -1) then continue;
-          for c in LayerSpace do neu1[c] += syn0[id,c + last_word * layer1_size];
+          for c in LayerSpace do neu1[c] += syn0[0,c + last_word * layer1_size];
           cw += 1;
         }
         if (cw) {
@@ -700,16 +721,16 @@ class NetworkContext {
             f = 0;
             l2 = vocabContext.vocab_tree[word].point[d] * layer1_size;
             // Propagate hidden -> output
-            for c in LayerSpace do f += neu1[c] * syn1[id,c + l2];
+            for c in LayerSpace do f += neu1[c] * syn1[0,c + l2];
             if (f <= -MAX_EXP) then continue;
             else if (f >= MAX_EXP) then continue;
             else f = expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int];
             // 'g' is the gradient multiplied by the learning rate
             g = (1 - vocabContext.vocab_tree[word].code[d] - f) * alpha;
             // Propagate errors output -> hidden
-            for c in LayerSpace do neu1e[c] += g * syn1[id,c + l2];
+            for c in LayerSpace do neu1e[c] += g * syn1[0,c + l2];
             // Learn weights hidden -> output
-            for c in LayerSpace do syn1[id,c + l2] += g * neu1[c];
+            for c in LayerSpace do syn1[0,c + l2] += g * neu1[c];
           }
           // NEGATIVE SAMPLING
           if (negative > 0) then for d in 0..#(negative + 1) {
@@ -725,12 +746,12 @@ class NetworkContext {
             }
             l2 = target * layer1_size;
             f = 0;
-            for c in LayerSpace do f += neu1[c] * syn1neg[id,c + l2];
+            for c in LayerSpace do f += neu1[c] * syn1neg[0,c + l2];
             if (f > MAX_EXP) then g = (labelx - 1) * alpha;
             else if (f < -MAX_EXP) then g = (labelx - 0) * alpha;
             else g = (labelx - expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int]) * alpha;
-            for c in LayerSpace do neu1e[c] += g * syn1neg[id,c + l2];
-            for c in LayerSpace do syn1neg[id,c + l2] += g * neu1[c];
+            for c in LayerSpace do neu1e[c] += g * syn1neg[0,c + l2];
+            for c in LayerSpace do syn1neg[0,c + l2] += g * neu1[c];
           }
           // hidden -> in
           for a in b..(window * 2 - b) do if (a != window) {
@@ -739,7 +760,7 @@ class NetworkContext {
             if (c >= sentence_length) then continue;
             last_word = sen[c];
             if (last_word == -1) then continue;
-            for c in LayerSpace do syn0[id,c + last_word * layer1_size] += neu1e[c];
+            for c in LayerSpace do syn0[0,c + last_word * layer1_size] += neu1e[c];
           }
         }
       } else {  //train skip-gram
@@ -756,16 +777,16 @@ class NetworkContext {
             f = 0;
             l2 = vocabContext.vocab_tree[word].point[d] * layer1_size;
             // Propagate hidden -> output
-            for c in LayerSpace do f += syn0[id,c + l1] * syn1[id,c + l2];
+            for c in LayerSpace do f += syn0[0,c + l1] * syn1[0,c + l2];
             if (f <= -MAX_EXP) then continue;
             else if (f >= MAX_EXP) then continue;
             else f = expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int];
             // 'g' is the gradient multiplied by the learning rate
             g = (1 - vocabContext.vocab_tree[word].code[d] - f) * alpha;
             // Propagate errors output -> hidden
-            for c in LayerSpace do neu1e[c] += g * syn1[id,c + l2];
+            for c in LayerSpace do neu1e[c] += g * syn1[0,c + l2];
             // Learn weights hidden -> output
-            for c in LayerSpace do syn1[id,c + l2] += g * syn0[id,c + l1];
+            for c in LayerSpace do syn1[0,c + l2] += g * syn0[0,c + l1];
           }
           // NEGATIVE SAMPLING
           if (negative > 0) then for d in 0..#negative {
@@ -781,15 +802,15 @@ class NetworkContext {
             }
             l2 = target * layer1_size;
             f = 0;
-            for c in LayerSpace do f += syn0[id,c + l1] * syn1neg[id,c + l2];
+            for c in LayerSpace do f += syn0[0,c + l1] * syn1neg[0,c + l2];
             if (f > MAX_EXP) then g = (labelx - 1) * alpha;
             else if (f < -MAX_EXP) then g = (labelx - 0) * alpha;
             else g = (labelx - expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int]) * alpha;
-            for c in LayerSpace do neu1e[c] += g * syn1neg[id,c + l2];
-            for c in LayerSpace do syn1neg[id,c + l2] += g * syn0[id,c + l1];
+            for c in LayerSpace do neu1e[c] += g * syn1neg[0,c + l2];
+            for c in LayerSpace do syn1neg[0,c + l2] += g * syn0[0,c + l1];
           }
           // Learn weights input -> hidden
-          for c in LayerSpace do syn0[id,c + l1] += neu1e[c];
+          for c in LayerSpace do syn0[0,c + l1] += neu1e[c];
         }
       }
       sentence_position += 1;
@@ -809,32 +830,42 @@ proc TrainModel() {
 
   info("Starting training using file ", train_file);
   var vocabContext = new VocabContext();
-  if (read_vocab_file != "") then vocabContext.ReadVocab(read_vocab_file); else vocabContext.LearnVocabFromTrainFile(train_file);
-  if (save_vocab_file != "") then vocabContext.SaveVocab(save_vocab_file);
+  vocabContext.loadFromFile(train_file, read_vocab_file, save_vocab_file, negative);
   if (output_file == "") then return;
-  vocabContext.CreateBinaryTree();
-  if (negative > 0) then vocabContext.InitUnigramTable();
   var network = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
   network.Init();
+
+  onloczeroDomain = network.syn0Domain;
 
   startStats();
 
   // run on a single locale using all threads available
-  for loc in Locales do on loc {
-    var localVocab = new VocabContext();
-    localVocab.clone(vocabContext);
+  forall loc in Locales do on loc {
+    var localVocab: VocabContext;
+    if here.id == 0 {
+      localVocab = vocabContext;
+    } else {
+      /*startVdebug("vocab");*/
+      localVocab = new VocabContext();
+      localVocab.loadFromFile(train_file.localize(), read_vocab_file.localize(), save_vocab_file.localize(), negative);
+      /*stopVdebug();*/
+    }
+    /*startVdebug("network");*/
     var localNetwork = new NetworkContext(localVocab, layer1_size, hs, negative, alpha);
     localNetwork.Clone(network);
     var referenceNetwork = new NetworkContext(localVocab, layer1_size, hs, negative, alpha);
     referenceNetwork.Clone(localNetwork);
     for batch in 0..#iterations by batch_size {
-      forall i in 0..#num_threads {
+      /*forall i in 0..#num_threads {
         localNetwork.TrainModelThread(train_file.localize(), i, batch_size);
-      }
+      }*/
       network.update(localNetwork, referenceNetwork);
     }
     reportStats(sumWordCountActual(), localVocab.train_words, localNetwork.alpha);
+    /*stopVdebug();*/
   }
+
+  const LayerSpace = {0..#layer1_size};
 
   var outputFile = open(output_file, iomode.cw);
   var writer = outputFile.writer(locking=false);
