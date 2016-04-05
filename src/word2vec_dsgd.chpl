@@ -856,9 +856,9 @@ proc TrainModel() {
     var referenceNetwork = new NetworkContext(localVocab, layer1_size, hs, negative, alpha);
     referenceNetwork.Clone(localNetwork);
     for batch in 0..#iterations by batch_size {
-      /*forall i in 0..#num_threads {
+      forall i in 0..#num_threads {
         localNetwork.TrainModelThread(train_file.localize(), i, batch_size);
-      }*/
+      }
       network.update(localNetwork, referenceNetwork);
     }
     reportStats(sumWordCountActual(), localVocab.train_words, localNetwork.alpha);
