@@ -606,32 +606,30 @@ class NetworkContext {
   }
 
   proc update(latest: NetworkContext, reference: NetworkContext) {
-    if syn0.locale.id != 0 then halt("syn0.locale.id != 0");
-    if onloczero.locale.id != 0 then halt("onloczero.locale.id != 0");
-
+    if (here.id != 0) then halt("update should occur on locale 0");
     // reuse the reference to compute the gradient
     /*startVdebug("update");*/
-    reference.syn0[syn0Domain] -= latest.syn0[syn0Domain];
+    on reference do reference.syn0[syn0Domain] -= latest.syn0[syn0Domain];
     onloczero[syn0Domain] = reference.syn0[syn0Domain];
-    on Locales[0] do syn0[syn0Domain] += onloczero[syn0Domain];
+    syn0[syn0Domain] += onloczero[syn0Domain];
     reference.syn0[syn0Domain] = syn0[syn0Domain];
-    latest.syn0[syn0Domain] = reference.syn0[syn0Domain];
+    on reference do latest.syn0[syn0Domain] = reference.syn0[syn0Domain];
     /*stopVdebug();*/
 
     if (hs) {
-      reference.syn1[syn1Domain] -= latest.syn1[syn1Domain];
+      on reference do reference.syn1[syn1Domain] -= latest.syn1[syn1Domain];
       onloczero[syn1Domain] = reference.syn1[syn1Domain];
-      on Locales[0] do syn1[syn1Domain] += onloczero[syn1Domain];
+      syn1[syn1Domain] += onloczero[syn1Domain];
       reference.syn1[syn1Domain] = syn1[syn1Domain];
-      latest.syn1[syn1Domain] = reference.syn1[syn1Domain];
+      on reference do latest.syn1[syn1Domain] = reference.syn1[syn1Domain];
     }
 
     if (negative) {
-      reference.syn1neg[syn1negDomain] -= latest.syn1neg[syn1negDomain];
+      on reference do reference.syn1neg[syn1negDomain] -= latest.syn1neg[syn1negDomain];
       onloczero[syn1negDomain] = reference.syn1neg[syn1negDomain];
-      on Locales[0] do syn1neg[syn1negDomain] += onloczero[syn1negDomain];
+      syn1neg[syn1negDomain] += onloczero[syn1negDomain];
       reference.syn1neg[syn1negDomain] = syn1neg[syn1negDomain];
-      latest.syn1neg[syn1negDomain] = reference.syn1neg[syn1negDomain];
+      on reference do latest.syn1neg[syn1negDomain] = reference.syn1neg[syn1negDomain];
     }
   }
 
@@ -665,8 +663,8 @@ class NetworkContext {
         word_count_actual[id,tid] += diff;
         last_word_count = word_count;
         if tid == 0 {
-          if diff > updateInterval then sum = sumWordCountActual();
-          if (id == 0) then reportStats(sum, train_words, alpha);
+          if tid == 0 && diff > updateInterval then sum = sumWordCountActual();
+          /*if (id == 0) then reportStats(sum, train_words, alpha);*/
           alpha = starting_alpha * (1 - sum / (iterations * train_words + 1):real);
           if (alpha < starting_alpha * 0.0001) then alpha = starting_alpha * 0.0001;
         }
@@ -847,37 +845,44 @@ proc TrainModel() {
 
   startStats();
 
-  var count$: sync int = numLocales;  // counter which also serves as a lock
-  var release$: single bool; // barrier release
+  var vocabArr: [0..#numLocales] VocabContext;
+  var networkArr: [0..#numLocales] NetworkContext;
+  var referenceNetworkArr: [0..#numLocales] NetworkContext;
 
   // run on a single locale using all threads available
   coforall loc in Locales do on loc {
-    var myc = count$;   // read the count, grab the lock (state = empty)
-
     var localVocab: VocabContext;
-    if myc == 1 {
+    if here.id == 0 {
       localVocab = vocabContext;
-      release$ = true;
     } else {
       localVocab = new VocabContext();
       localVocab.loadFromFile(train_file.localize(), read_vocab_file.localize(), save_vocab_file.localize(), negative);
-      count$ = myc-1;
-      release$;
     }
+    vocabArr[loc.id] = localVocab;
 
-    /*startVdebug("network");*/
     var localNetwork = new NetworkContext(localVocab, layer1_size, hs, negative, alpha);
     localNetwork.Clone(network);
+    networkArr[loc.id] = localNetwork;
     var referenceNetwork = new NetworkContext(localVocab, layer1_size, hs, negative, alpha);
     referenceNetwork.Clone(localNetwork);
-    for batch in 0..#iterations by batch_size {
-      forall i in 0..#num_threads {
-        localNetwork.TrainModelThread(train_file.localize(), i, batch_size);
+    referenceNetworkArr[loc.id] = referenceNetwork;
+  }
+
+  // run on a single locale using all threads available
+  for batch in 0..#iterations by batch_size {
+    info("computing");
+    startVdebug("network");
+    coforall loc in Locales do on loc {
+      forall tid in 0..#num_threads {
+        networkArr[loc.id].TrainModelThread(train_file.localize(), tid, batch_size);
       }
-      network.update(localNetwork, referenceNetwork);
     }
-    reportStats(sumWordCountActual(), localVocab.train_words, localNetwork.alpha);
-    /*stopVdebug();*/
+    stopVdebug();
+    info("updating");
+    for loc in Locales do {
+      networkArr[0].update(networkArr[loc.id], referenceNetworkArr[loc.id]);
+    }
+    reportStats(sumWordCountActual(), vocabContext.train_words, networkArr[0].alpha);
   }
 
   const LayerSpace = {0..#layer1_size};
