@@ -665,8 +665,8 @@ class NetworkContext {
         word_count_actual[id,tid] += diff;
         last_word_count = word_count;
         if tid == 0 {
-          if tid == 0 && diff > updateInterval then sum = sumWordCountActual();
-          /*if (id == 0) then reportStats(sum, train_words, alpha);*/
+          if diff > updateInterval then sum = sumWordCountActual();
+          if (id == 0) then reportStats(sum, train_words, alpha);
           alpha = starting_alpha * (1 - sum / (iterations * train_words + 1):real);
           if (alpha < starting_alpha * 0.0001) then alpha = starting_alpha * 0.0001;
         }
@@ -850,7 +850,6 @@ proc TrainModel() {
 
   var vocabArr: [0..#numLocales] VocabContext;
   var networkArr: [0..#numLocales] NetworkContext;
-  var referenceNetworkArr: [0..#numLocales] NetworkContext;
 
   // run on a single locale using all threads available
   coforall loc in Locales do on loc {
@@ -866,10 +865,10 @@ proc TrainModel() {
     var localNetwork = new NetworkContext(localVocab, layer1_size, hs, negative, alpha);
     localNetwork.Clone(network);
     networkArr[loc.id] = localNetwork;
-    var referenceNetwork = new NetworkContext(localVocab, layer1_size, hs, negative, alpha);
-    referenceNetwork.Clone(localNetwork);
-    referenceNetworkArr[loc.id] = referenceNetwork;
   }
+
+  var baseNetwork = networkArr[0];
+  var referenceNetwork: NetworkContext = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
 
   // run on a single locale using all threads available
   for batch in 0..#iterations by batch_size {
@@ -882,10 +881,9 @@ proc TrainModel() {
     }
     stopVdebug();
     info("updating");
-    for loc in Locales do {
-      networkArr[0].update(networkArr[loc.id], referenceNetworkArr[loc.id]);
-    }
-    reportStats(sumWordCountActual(), vocabContext.train_words, networkArr[0].alpha);
+    for loc in Locales do baseNetwork.update(networkArr[loc.id], referenceNetwork);
+    referenceNetwork.Clone(baseNetwork);
+    reportStats(sumWordCountActual(), vocabContext.train_words, baseNetwork.alpha);
   }
 
   const LayerSpace = {0..#layer1_size};
