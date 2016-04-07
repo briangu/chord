@@ -3,7 +3,7 @@
 // this translation biases towards lexical equivalence versus performance.
 use BlockDist, Logging, Time, VisualDebug;
 
-type elemType = real(32);
+type elemType = real(64);
 
 const MAX_STRING = 100;
 const EXP_TABLE_SIZE = 1000;
@@ -32,7 +32,7 @@ config var alpha = 0.025 * 2;
 config const sample = 1e-3;
 config const size = 100;
 config const debug_mode = 2;
-config const num_threads = here.maxTaskPar - 1;
+config const num_threads = here.maxTaskPar;
 
 const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
@@ -873,18 +873,20 @@ proc TrainModel() {
   // run on a single locale using all threads available
   for batch in 0..#iterations by batch_size {
     info("computing");
-    startVdebug("network");
+    /*startVdebug("network");*/
     coforall loc in Locales do on loc {
       forall tid in 0..#num_threads {
         networkArr[loc.id].TrainModelThread(train_file.localize(), tid, batch_size);
       }
     }
-    stopVdebug();
+    /*stopVdebug();*/
     info("updating");
     for loc in Locales do baseNetwork.update(networkArr[loc.id], referenceNetwork);
     referenceNetwork.Clone(baseNetwork);
     reportStats(sumWordCountActual(), vocabContext.train_words, baseNetwork.alpha);
   }
+
+  info("writing results");
 
   const LayerSpace = {0..#layer1_size};
 
