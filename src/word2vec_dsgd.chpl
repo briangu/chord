@@ -608,7 +608,6 @@ class NetworkContext {
   proc update(latest: NetworkContext, reference: NetworkContext) {
     if (here.id != 0) then halt("update should occur on locale 0");
     // reuse the reference to compute the gradient
-    /*startVdebug("update");*/
     cobegin {
         begin {
           on reference do reference.syn0[syn0Domain] -= latest.syn0[syn0Domain];
@@ -657,6 +656,8 @@ class NetworkContext {
     const seekStart = fileChunkSize * id + taskFileChunkSize * tid;
     const seekStop = seekStart + taskFileChunkSize;
     var reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop, locking=false);
+    reader.lock();
+    reader._mark();
 
     while (1) {
       if (word_count - last_word_count > updateInterval) {
@@ -699,8 +700,9 @@ class NetworkContext {
         word_count = 0;
         last_word_count = 0;
         sentence_length = 0;
-        reader.close();
-        reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop);
+        reader._revert();
+        reader.lock();
+        reader._mark();
         atEOF = false;
         continue;
       }
