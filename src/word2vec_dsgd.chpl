@@ -609,27 +609,28 @@ class NetworkContext {
     if (here.id != 0) then halt("update should occur on locale 0");
     // reuse the reference to compute the gradient
     /*startVdebug("update");*/
-    on reference do reference.syn0[syn0Domain] -= latest.syn0[syn0Domain];
-    onloczero[syn0Domain] = reference.syn0[syn0Domain];
-    syn0[syn0Domain] += onloczero[syn0Domain];
-    reference.syn0[syn0Domain] = syn0[syn0Domain];
-    on reference do latest.syn0[syn0Domain] = reference.syn0[syn0Domain];
-    /*stopVdebug();*/
-
-    if (hs) {
-      on reference do reference.syn1[syn1Domain] -= latest.syn1[syn1Domain];
-      onloczero[syn1Domain] = reference.syn1[syn1Domain];
-      syn1[syn1Domain] += onloczero[syn1Domain];
-      reference.syn1[syn1Domain] = syn1[syn1Domain];
-      on reference do latest.syn1[syn1Domain] = reference.syn1[syn1Domain];
-    }
-
-    if (negative) {
-      on reference do reference.syn1neg[syn1negDomain] -= latest.syn1neg[syn1negDomain];
-      onloczero[syn1negDomain] = reference.syn1neg[syn1negDomain];
-      syn1neg[syn1negDomain] += onloczero[syn1negDomain];
-      reference.syn1neg[syn1negDomain] = syn1neg[syn1negDomain];
-      on reference do latest.syn1neg[syn1negDomain] = reference.syn1neg[syn1negDomain];
+    cobegin {
+        begin {
+          on reference do reference.syn0[syn0Domain] -= latest.syn0[syn0Domain];
+          onloczero[syn0Domain] = reference.syn0[syn0Domain];
+          syn0[syn0Domain] += onloczero[syn0Domain];
+          reference.syn0[syn0Domain] = syn0[syn0Domain];
+          on reference do latest.syn0[syn0Domain] = reference.syn0[syn0Domain];
+        }
+        if (hs) then begin {
+          on reference do reference.syn1[syn1Domain] -= latest.syn1[syn1Domain];
+          onloczero[syn1Domain] = reference.syn1[syn1Domain];
+          syn1[syn1Domain] += onloczero[syn1Domain];
+          reference.syn1[syn1Domain] = syn1[syn1Domain];
+          on reference do latest.syn1[syn1Domain] = reference.syn1[syn1Domain];
+        }
+        if (negative) then begin {
+          on reference do reference.syn1neg[syn1negDomain] -= latest.syn1neg[syn1negDomain];
+          onloczero[syn1negDomain] = reference.syn1neg[syn1negDomain];
+          syn1neg[syn1negDomain] += onloczero[syn1negDomain];
+          reference.syn1neg[syn1negDomain] = syn1neg[syn1negDomain];
+          on reference do latest.syn1neg[syn1negDomain] = reference.syn1neg[syn1negDomain];
+        }
     }
   }
 
