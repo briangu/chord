@@ -1,7 +1,7 @@
 // The following is a "lexical" translation of the classic word2vec
 // As this is a baseline for creating a distributed version of word2vec in Chapel,
 // this translation biases towards lexical equivalence versus performance.
-use BlockDist, Logging, Time, VisualDebug;
+use BlockDist, Logging, Time, PrivateDist, VisualDebug;
 
 type elemType = real(64);
 
@@ -554,11 +554,14 @@ class NetworkContext {
   const train_words = vocabContext.train_words;
 
   const syn0Domain = {0..#1,0..#(vocab_size*layer1_size)};
-  var syn0: [syn0Domain] elemType;
+  const syn0DomainSpace = syn0Domain; // dmapped Block(boundingBox=syn0Domain, targetLocales=MyLocales);
+  var syn0: [syn0DomainSpace] elemType;
   const syn1Domain = if (hs) then syn0Domain else {0..#1,0..#1};
-  var syn1: [syn1Domain] elemType;
+  const syn1DomainSpace = syn1Domain; // dmapped Block(boundingBox=syn1Domain, targetLocales=MyLocales);
+  var syn1: [syn1DomainSpace] elemType;
   const syn1negDomain = if (negative) then syn0Domain else {0..#1,0..#1};
-  var syn1neg: [syn1negDomain] elemType;
+  const syn1negDomainSpace = syn1negDomain; // dmapped Block(boundingBox=syn1negDomain, targetLocales=MyLocales);
+  var syn1neg: [syn1negDomainSpace] elemType;
 
   var expTable: [0..#(EXP_TABLE_SIZE+1)] real;
 
@@ -606,31 +609,34 @@ class NetworkContext {
   }
 
   proc update(latest: NetworkContext, reference: NetworkContext) {
+    const tid = latest.locale.id;
+    info("starting update", tid);
     if (here.id != 0) then halt("update should occur on locale 0");
     // reuse the reference to compute the gradient
-    cobegin {
-        begin {
+    /*cobegin {*/
+        {
           on reference do reference.syn0[syn0Domain] -= latest.syn0[syn0Domain];
           onloczero[syn0Domain] = reference.syn0[syn0Domain];
           syn0[syn0Domain] += onloczero[syn0Domain];
           reference.syn0[syn0Domain] = syn0[syn0Domain];
           on reference do latest.syn0[syn0Domain] = reference.syn0[syn0Domain];
         }
-        if (hs) then begin {
+        if (hs) then {
           on reference do reference.syn1[syn1Domain] -= latest.syn1[syn1Domain];
           onloczero[syn1Domain] = reference.syn1[syn1Domain];
           syn1[syn1Domain] += onloczero[syn1Domain];
           reference.syn1[syn1Domain] = syn1[syn1Domain];
           on reference do latest.syn1[syn1Domain] = reference.syn1[syn1Domain];
         }
-        if (negative) then begin {
+        if (negative) then {
           on reference do reference.syn1neg[syn1negDomain] -= latest.syn1neg[syn1negDomain];
           onloczero[syn1negDomain] = reference.syn1neg[syn1negDomain];
           syn1neg[syn1negDomain] += onloczero[syn1negDomain];
           reference.syn1neg[syn1negDomain] = syn1neg[syn1negDomain];
           on reference do latest.syn1neg[syn1negDomain] = reference.syn1neg[syn1negDomain];
         }
-    }
+    /*}*/
+    info("stopping update", tid);
   }
 
   proc TrainModelThread(tf: string, tid: int, batch_size: int) {
@@ -659,7 +665,7 @@ class NetworkContext {
     reader.lock();
     reader._mark();
 
-    while (1) {
+    local while (1) {
       if (word_count - last_word_count > updateInterval) {
         var diff = word_count - last_word_count;
         word_count_actual[id,tid] += diff;
@@ -675,6 +681,7 @@ class NetworkContext {
         while (1) {
           word = vocabContext.ReadWordIndex(reader);
           if (word == -2) {
+            info("atEOF", tid);
             atEOF = true;
             break;
           }
@@ -694,16 +701,24 @@ class NetworkContext {
         sentence_position = 0;
       }
       if (atEOF || (word_count > wordsPerTask)) {
+        info("at limit", tid);
         word_count_actual[id,tid] += word_count - last_word_count;
         local_iter -= 1;
-        if (local_iter == 0) then break;
+        if (local_iter == 0) {
+          info("breaking", tid);
+          break;
+        }
         word_count = 0;
         last_word_count = 0;
         sentence_length = 0;
+        info("rewinding file", tid);
         reader._revert();
         reader.lock();
         reader._mark();
+        /*reader.close();
+        reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop, locking=false);*/
         atEOF = false;
+        info("restarting", tid);
         continue;
       }
       word = sen[sentence_position];
@@ -723,7 +738,7 @@ class NetworkContext {
           if (c >= sentence_length) then continue;
           last_word = sen[c];
           if (last_word == -1) then continue;
-          for c in LayerSpace do neu1[c] += syn0[0,c + last_word * layer1_size];
+          local for c in LayerSpace do neu1[c] += syn0[0,c + last_word * layer1_size];
           cw += 1;
         }
         if (cw) {
@@ -771,7 +786,7 @@ class NetworkContext {
             if (c >= sentence_length) then continue;
             last_word = sen[c];
             if (last_word == -1) then continue;
-            for c in LayerSpace do syn0[0,c + last_word * layer1_size] += neu1e[c];
+            local for c in LayerSpace do syn0[0,c + last_word * layer1_size] += neu1e[c];
           }
         }
       } else {  //train skip-gram
@@ -830,8 +845,11 @@ class NetworkContext {
         continue;
       }
     }
+    info("closing ", tid);
+    reader._revert();
     reader.close();
     trainFile.close();
+    info("done ", tid);
   }
 }
 
@@ -848,42 +866,41 @@ proc TrainModel() {
 
   startStats();
 
-  var vocabArr: [0..#numLocales] VocabContext;
-  var networkArr: [0..#numLocales] NetworkContext;
+  var vocabArr: [PrivateSpace] VocabContext;
+  var networkArr: [PrivateSpace] NetworkContext;
+  var referenceNetwork = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
 
   // run on a single locale using all threads available
   coforall loc in Locales do on loc {
-    var localVocab: VocabContext;
     if here.id == 0 {
-      localVocab = vocabContext;
+      vocabArr[here.id] = vocabContext;
+      networkArr[here.id] = network;
     } else {
-      localVocab = new VocabContext();
-      localVocab.loadFromFile(train_file.localize(), read_vocab_file.localize(), save_vocab_file.localize(), negative);
+      vocabArr[here.id] = new VocabContext();
+      vocabArr[here.id].loadFromFile(train_file.localize(), read_vocab_file.localize(), save_vocab_file.localize(), negative);
+      networkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
+      networkArr[here.id].Clone(network);
     }
-    vocabArr[loc.id] = localVocab;
-
-    var localNetwork = new NetworkContext(localVocab, layer1_size, hs, negative, alpha);
-    localNetwork.Clone(network);
-    networkArr[loc.id] = localNetwork;
   }
-
-  var baseNetwork = networkArr[0];
-  var referenceNetwork: NetworkContext = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
 
   // run on a single locale using all threads available
   for batch in 0..#iterations by batch_size {
-    info("computing");
+    info("computing ",batch);
     /*startVdebug("network");*/
     coforall loc in Locales do on loc {
       forall tid in 0..#num_threads {
-        networkArr[loc.id].TrainModelThread(train_file.localize(), tid, batch_size);
+        info("in loc ", tid);
+        networkArr[0].TrainModelThread(train_file.localize(), tid, batch_size);
+        info("out loc ", tid);
       }
     }
     /*stopVdebug();*/
     info("updating");
-    for loc in Locales do baseNetwork.update(networkArr[loc.id], referenceNetwork);
-    referenceNetwork.Clone(baseNetwork);
-    reportStats(sumWordCountActual(), vocabContext.train_words, baseNetwork.alpha);
+    if (numLocales > 1) {
+      for id in 1..(numLocales-1) do networkArr[0].update(networkArr[id], referenceNetwork);
+    }
+    referenceNetwork.Clone(networkArr[0]);
+    /*reportStats(sumWordCountActual(), vocabContext.train_words, networkArr[0].alpha);*/
   }
 
   info("writing results");
