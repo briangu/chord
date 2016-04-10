@@ -624,22 +624,22 @@ class NetworkContext {
           on reference do latest.syn0[syn0Domain] -= reference.syn0[syn0Domain];
           onloczero[syn0Domain] = latest.syn0[syn0Domain];
           syn0[syn0Domain] += onloczero[syn0Domain];
-          reference.syn0[syn0Domain] = syn0[syn0Domain];
-          on reference do latest.syn0[syn0Domain] = reference.syn0[syn0Domain];
+          /*reference.syn0[syn0Domain] = syn0[syn0Domain];
+          on reference do latest.syn0[syn0Domain] = reference.syn0[syn0Domain];*/
         }
         if (hs) then {
           on reference do latest.syn1[syn1Domain] -= reference.syn1[syn1Domain];
           onloczero[syn1Domain] = latest.syn1[syn1Domain];
           syn1[syn1Domain] += onloczero[syn1Domain];
-          reference.syn1[syn1Domain] = syn1[syn1Domain];
-          on reference do latest.syn1[syn1Domain] = reference.syn1[syn1Domain];
+          /*reference.syn1[syn1Domain] = syn1[syn1Domain];
+          on reference do latest.syn1[syn1Domain] = reference.syn1[syn1Domain];*/
         }
         if (negative) then {
           on reference do latest.syn1neg[syn1negDomain] -= reference.syn1neg[syn1negDomain];
           onloczero[syn1negDomain] = latest.syn1neg[syn1negDomain];
           syn1neg[syn1negDomain] += onloczero[syn1negDomain];
-          reference.syn1neg[syn1negDomain] = syn1neg[syn1negDomain];
-          on reference do latest.syn1neg[syn1negDomain] = reference.syn1neg[syn1negDomain];
+          /*reference.syn1neg[syn1negDomain] = syn1neg[syn1negDomain];
+          on reference do latest.syn1neg[syn1negDomain] = reference.syn1neg[syn1negDomain];*/
         }
     info("stopping update", tid);
   }
@@ -676,9 +676,9 @@ class NetworkContext {
         total_word_count += diff;
         last_word_count = word_count;
         if tid == 0 {
-          var fauxSum = total_word_count * numLocales;
-          if (id == 0) then reportStats(total_word_count, train_words, alpha);
-          alpha = starting_alpha * (1 - (fauxSum / (iterations * train_words + 1):real));
+          var fauxSum = total_word_count;
+          if (id == 0) then reportStats(total_word_count, train_words / numLocales, alpha);
+          alpha = starting_alpha * (1 - (fauxSum / (iterations * (train_words/numLocales) + 1):real));
           if (alpha < starting_alpha * 0.0001) then alpha = starting_alpha * 0.0001;
         }
       }
@@ -913,6 +913,10 @@ proc TrainModel() {
       for id in 1..(numLocales-1) do networkArr[0].update(networkArr[id], referenceNetwork[id]);
     }*/
     for id in 0..(numLocales-1) do referenceNetwork.update(networkArr[id], referenceNetworkArr[id]);
+    for loc in Locales do on loc {
+      networkArr[here.id].copy(referenceNetwork);
+      referenceNetworkArr[here.id].copy(networkArr[here.id]);
+    }
     stopVdebug();
   }
 
