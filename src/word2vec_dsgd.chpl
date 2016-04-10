@@ -58,7 +58,7 @@ proc startStats() {
   lastTimerValue = statsTimerStart;
 }
 
-proc sumWordCountActual(): int {
+/*proc sumWordCountActual(): int {
   var sum: int;
   for i in 0..#numLocales {
     for j in 0..#num_threads {
@@ -66,7 +66,7 @@ proc sumWordCountActual(): int {
     }
   }
   return sum;
-}
+}*/
 
 proc reportStats(sum, train_words, alpha) {
   var now = statsTimer.elapsed(TimeUnits.milliseconds);
@@ -548,7 +548,7 @@ class NetworkContext {
   var negative: int;
   var alpha: real;
 
-  var next_random: uint(64) = 0:uint(64);
+  var next_random_arr: [num_threads] uint(64);
 
   const starting_alpha: real = alpha;
 
@@ -575,11 +575,14 @@ class NetworkContext {
   var onloczeroDomain: domain(2) = syn0Domain dmapped Block(boundingBox=syn0Domain, targetLocales=ZeroLocales);
   var onloczero: [onloczeroDomain] elemType;
 
+  var total_word_count: int;
+
   proc InitExpTable() {
     for i in 0..#EXP_TABLE_SIZE {
       expTable[i] = exp((i / EXP_TABLE_SIZE:real * 2 - 1) * MAX_EXP); // Precompute the exp() table
       expTable[i] = expTable[i] / (expTable[i] + 1);                   // Precompute f(x) = x / (x + 1)
     }
+    for i in 0..#num_threads do next_random_arr[i] = i:uint(64);
   }
 
   proc RandomizeNetwork() {
@@ -597,53 +600,57 @@ class NetworkContext {
     RandomizeNetwork();
   }
 
-  proc Clone(networkContext: NetworkContext) {
+  proc initWith(network: NetworkContext) {
+    copy(network);
+    InitExpTable();
+  }
+
+  proc copy(networkContext: NetworkContext) {
     /*if (this.syn0Domain == networkContext.syn0Domain) then halt("syn0Domain not equal");
     if (this.syn1Domain == networkContext.syn1Domain) then halt("syn0Domain not equal");
     if (this.syn1negDomain == networkContext.syn1negDomain) then halt("syn0Domain not equal");*/
     this.syn0[this.syn0Domain] = networkContext.syn0[this.syn0Domain];
     this.syn1[this.syn1Domain] = networkContext.syn1[this.syn1Domain];
     this.syn1neg[this.syn1negDomain] = networkContext.syn1neg[this.syn1negDomain];
-
-    InitExpTable();
   }
 
   proc update(latest: NetworkContext, reference: NetworkContext) {
     const tid = latest.locale.id;
     info("starting update", tid);
     if (here.id != 0) then halt("update should occur on locale 0");
+    if (latest.locale.id != reference.locale.id) then halt("latest.locale.id != reference.locale.id");
     // reuse the reference to compute the gradient
-    {
-      on reference do reference.syn0[syn0Domain] -= latest.syn0[syn0Domain];
-      onloczero[syn0Domain] = reference.syn0[syn0Domain];
-      syn0[syn0Domain] += onloczero[syn0Domain];
-      /*reference.syn0[syn0Domain] = syn0[syn0Domain];*/
-      /*on reference do latest.syn0[syn0Domain] = reference.syn0[syn0Domain];*/
-    }
-    if (hs) then {
-      on reference do reference.syn1[syn1Domain] -= latest.syn1[syn1Domain];
-      onloczero[syn1Domain] = reference.syn1[syn1Domain];
-      syn1[syn1Domain] += onloczero[syn1Domain];
-      /*reference.syn1[syn1Domain] = syn1[syn1Domain];*/
-      /*on reference do latest.syn1[syn1Domain] = reference.syn1[syn1Domain];*/
-    }
-    if (negative) then {
-      on reference do reference.syn1neg[syn1negDomain] -= latest.syn1neg[syn1negDomain];
-      onloczero[syn1negDomain] = reference.syn1neg[syn1negDomain];
-      syn1neg[syn1negDomain] += onloczero[syn1negDomain];
-      /*reference.syn1neg[syn1negDomain] = syn1neg[syn1negDomain];*/
-      /*on reference do latest.syn1neg[syn1negDomain] = reference.syn1neg[syn1negDomain];*/
-    }
+        {
+          on reference do latest.syn0[syn0Domain] -= reference.syn0[syn0Domain];
+          onloczero[syn0Domain] = latest.syn0[syn0Domain];
+          syn0[syn0Domain] += onloczero[syn0Domain];
+          reference.syn0[syn0Domain] = syn0[syn0Domain];
+          on reference do latest.syn0[syn0Domain] = reference.syn0[syn0Domain];
+        }
+        if (hs) then {
+          on reference do latest.syn1[syn1Domain] -= reference.syn1[syn1Domain];
+          onloczero[syn1Domain] = latest.syn1[syn1Domain];
+          syn1[syn1Domain] += onloczero[syn1Domain];
+          reference.syn1[syn1Domain] = syn1[syn1Domain];
+          on reference do latest.syn1[syn1Domain] = reference.syn1[syn1Domain];
+        }
+        if (negative) then {
+          on reference do latest.syn1neg[syn1negDomain] -= reference.syn1neg[syn1negDomain];
+          onloczero[syn1negDomain] = latest.syn1neg[syn1negDomain];
+          syn1neg[syn1negDomain] += onloczero[syn1negDomain];
+          reference.syn1neg[syn1negDomain] = syn1neg[syn1negDomain];
+          on reference do latest.syn1neg[syn1negDomain] = reference.syn1neg[syn1negDomain];
+        }
     info("stopping update", tid);
   }
 
   proc TrainModelThread(tf: string, tid: int, batch_size: int) {
     var a, b, d, cw, word, last_word, sentence_length, sentence_position: int(64);
-    var total_word_count, word_count, last_word_count: int(64);
+    var word_count, last_word_count: int(64);
     var sen: [0..#(MAX_SENTENCE_LENGTH + 1)] int;
     var l1, l2, c, target, labelx: int(64);
     var local_iter = batch_size;
-    /*var next_random: uint(64) = tid:uint(64);*/
+    var next_random: uint(64) = next_random_arr[tid];//tid:uint(64);
     var f, g: real;
     var atEOF = false;
 
@@ -666,11 +673,11 @@ class NetworkContext {
     local while (1) {
       if (word_count - last_word_count > updateInterval) {
         var diff = word_count - last_word_count;
-        word_count_actual[id,tid] += diff;
+        total_word_count += diff;
         last_word_count = word_count;
         if tid == 0 {
-          var fauxSum = word_count_actual[id,tid] * numLocales * num_threads;
-          if (id == 0) then reportStats(fauxSum, train_words, alpha);
+          var fauxSum = total_word_count * numLocales;
+          if (id == 0) then reportStats(total_word_count, train_words, alpha);
           alpha = starting_alpha * (1 - (fauxSum / (iterations * train_words + 1):real));
           if (alpha < starting_alpha * 0.0001) then alpha = starting_alpha * 0.0001;
         }
@@ -700,7 +707,7 @@ class NetworkContext {
       }
       if (atEOF || (word_count > wordsPerTask)) {
         /*info("at limit", tid);*/
-        word_count_actual[id,tid] += word_count - last_word_count;
+        total_word_count += word_count - last_word_count;
         local_iter -= 1;
         if (local_iter == 0) {
           /*info("breaking", tid);*/
@@ -843,6 +850,7 @@ class NetworkContext {
         continue;
       }
     }
+    next_random_arr[tid] = next_random;
     info("closing ", tid);
     reader._revert();
     reader.close();
@@ -861,25 +869,29 @@ proc TrainModel() {
   if (output_file == "") then return;
   var network = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
   network.Init();
+  var referenceNetwork = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
+  referenceNetwork.initWith(network);
 
   startStats();
 
   var vocabArr: [PrivateSpace] VocabContext;
   var networkArr: [PrivateSpace] NetworkContext;
-  var referenceNetwork: [PrivateSpace] NetworkContext;
+  var referenceNetworkArr: [PrivateSpace] NetworkContext;
 
   // run on a single locale using all threads available
   coforall loc in Locales do on loc {
     if here.id == 0 {
       vocabArr[here.id] = vocabContext;
       networkArr[here.id] = network;
+      referenceNetworkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
+      referenceNetworkArr[here.id].initWith(network);
     } else {
       vocabArr[here.id] = new VocabContext();
       vocabArr[here.id].loadFromFile(train_file.localize(), read_vocab_file.localize(), save_vocab_file.localize(), negative);
       networkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
-      networkArr[here.id].Clone(network);
-      referenceNetwork[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
-      referenceNetwork[here.id].Clone(network);
+      networkArr[here.id].initWith(network);
+      referenceNetworkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
+      referenceNetworkArr[here.id].initWith(network);
     }
   }
 
@@ -897,13 +909,10 @@ proc TrainModel() {
     stopVdebug();
     startVdebug("updating");
     info("updating");
-    if (numLocales > 1) {
+    /*if (numLocales > 1) {
       for id in 1..(numLocales-1) do networkArr[0].update(networkArr[id], referenceNetwork[id]);
-      for id in 1..(numLocales-1) do on Locales[id] {
-        referenceNetwork[here.id].Clone(networkArr[0]);
-        networkArr[here.id].Clone(referenceNetwork[here.id]);
-      }
-    }
+    }*/
+    for id in 0..(numLocales-1) do referenceNetwork.update(networkArr[id], referenceNetworkArr[id]);
     stopVdebug();
   }
 
@@ -921,8 +930,8 @@ proc TrainModel() {
         writer.writef("%c", vocabContext.vocab[a].word[j]);
       }
       writer.write(" ");
-      if (binary) then for b in LayerSpace do writer.writef("%|4r", network.syn0[0,a * layer1_size + b]);
-      else for b in LayerSpace do writer.write(network.syn0[0,a * layer1_size + b], " ");
+      if (binary) then for b in LayerSpace do writer.writef("%|4r", referenceNetwork.syn0[0,a * layer1_size + b]);
+      else for b in LayerSpace do writer.write(referenceNetwork.syn0[0,a * layer1_size + b], " ");
       writer.writeln();
     }
   } else {
@@ -940,7 +949,7 @@ proc TrainModel() {
       for b in 0..#(clcn * layer1_size) do cent[b] = 0;
       for b in 0..#clcn do centcn[b] = 1;
       for c in 0..#vocabContext.vocab_size {
-        for d in LayerSpace do cent[layer1_size * cl[c] + d] += network.syn0[0,c * layer1_size + d];
+        for d in LayerSpace do cent[layer1_size * cl[c] + d] += referenceNetwork.syn0[0,c * layer1_size + d];
         centcn[cl[c]] += 1;
       }
       for b in 0..#clcn {
