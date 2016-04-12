@@ -614,33 +614,26 @@ class NetworkContext {
     this.syn1neg[this.syn1negDomain] = networkContext.syn1neg[this.syn1negDomain];
   }
 
-  proc update(latest: NetworkContext, reference: NetworkContext) {
+  proc update(latest: NetworkContext) {
     const tid = latest.locale.id;
     info("starting update", tid);
     if (here.id != 0) then halt("update should occur on locale 0");
-    if (latest.locale.id != reference.locale.id) then halt("latest.locale.id != reference.locale.id");
-    // reuse the reference to compute the gradient
-        {
-          on reference do latest.syn0[syn0Domain] -= reference.syn0[syn0Domain];
-          onloczero[syn0Domain] = latest.syn0[syn0Domain];
-          syn0[syn0Domain] += onloczero[syn0Domain];
-          /*reference.syn0[syn0Domain] = syn0[syn0Domain];
-          on reference do latest.syn0[syn0Domain] = reference.syn0[syn0Domain];*/
-        }
-        if (hs) then {
-          on reference do latest.syn1[syn1Domain] -= reference.syn1[syn1Domain];
-          onloczero[syn1Domain] = latest.syn1[syn1Domain];
-          syn1[syn1Domain] += onloczero[syn1Domain];
-          /*reference.syn1[syn1Domain] = syn1[syn1Domain];
-          on reference do latest.syn1[syn1Domain] = reference.syn1[syn1Domain];*/
-        }
-        if (negative) then {
-          on reference do latest.syn1neg[syn1negDomain] -= reference.syn1neg[syn1negDomain];
-          onloczero[syn1negDomain] = latest.syn1neg[syn1negDomain];
-          syn1neg[syn1negDomain] += onloczero[syn1negDomain];
-          /*reference.syn1neg[syn1negDomain] = syn1neg[syn1negDomain];
-          on reference do latest.syn1neg[syn1negDomain] = reference.syn1neg[syn1negDomain];*/
-        }
+    // TODO: adagrad
+    {
+      onloczero[syn0Domain] = latest.syn0[syn0Domain];
+      onloczero[syn0Domain] -= syn0[syn0Domain];
+      syn0[syn0Domain] += onloczero[syn0Domain];
+    }
+    if (hs) then {
+      onloczero[syn1Domain] = latest.syn1[syn1Domain];
+      onloczero[syn1Domain] -= syn1[syn1Domain];
+      syn1[syn1Domain] += onloczero[syn1Domain];
+    }
+    if (negative) then {
+      onloczero[syn1negDomain] = latest.syn1neg[syn1negDomain];
+      onloczero[syn1negDomain] -= syn1neg[syn1negDomain];
+      syn1neg[syn1negDomain] += onloczero[syn1negDomain];
+    }
     info("stopping update", tid);
   }
 
@@ -876,22 +869,17 @@ proc TrainModel() {
 
   var vocabArr: [PrivateSpace] VocabContext;
   var networkArr: [PrivateSpace] NetworkContext;
-  var referenceNetworkArr: [PrivateSpace] NetworkContext;
 
   // run on a single locale using all threads available
   coforall loc in Locales do on loc {
     if here.id == 0 {
       vocabArr[here.id] = vocabContext;
       networkArr[here.id] = network;
-      referenceNetworkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
-      referenceNetworkArr[here.id].initWith(network);
     } else {
       vocabArr[here.id] = new VocabContext();
       vocabArr[here.id].loadFromFile(train_file.localize(), read_vocab_file.localize(), save_vocab_file.localize(), negative);
       networkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
       networkArr[here.id].initWith(network);
-      referenceNetworkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
-      referenceNetworkArr[here.id].initWith(network);
     }
   }
 
@@ -909,14 +897,8 @@ proc TrainModel() {
     stopVdebug();
     startVdebug("updating");
     info("updating");
-    /*if (numLocales > 1) {
-      for id in 1..(numLocales-1) do networkArr[0].update(networkArr[id], referenceNetwork[id]);
-    }*/
-    for id in 0..(numLocales-1) do referenceNetwork.update(networkArr[id], referenceNetworkArr[id]);
-    for loc in Locales do on loc {
-      networkArr[here.id].copy(referenceNetwork);
-      referenceNetworkArr[here.id].copy(networkArr[here.id]);
-    }
+    for id in 0..(numLocales-1) do referenceNetwork.update(networkArr[id]);
+    for loc in Locales do on loc do networkArr[here.id].copy(referenceNetwork);
     stopVdebug();
   }
 
