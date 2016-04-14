@@ -622,16 +622,19 @@ class NetworkContext {
     {
       onloczero[syn0Domain] = latest.syn0[syn0Domain];
       onloczero[syn0Domain] -= syn0[syn0Domain];
+      onloczero[syn0Domain] /= numLocales;
       syn0[syn0Domain] += onloczero[syn0Domain];
     }
     if (hs) then {
       onloczero[syn1Domain] = latest.syn1[syn1Domain];
       onloczero[syn1Domain] -= syn1[syn1Domain];
+      onloczero[syn1Domain] /= numLocales;
       syn1[syn1Domain] += onloczero[syn1Domain];
     }
     if (negative) then {
       onloczero[syn1negDomain] = latest.syn1neg[syn1negDomain];
       onloczero[syn1negDomain] -= syn1neg[syn1negDomain];
+      onloczero[syn1negDomain] /= numLocales;
       syn1neg[syn1negDomain] += onloczero[syn1negDomain];
     }
     info("stopping update", tid);
