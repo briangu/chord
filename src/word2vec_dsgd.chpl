@@ -1,7 +1,7 @@
-// The following is a "lexical" translation of the classic word2vec
+/*
+  Distributed Word2Vec
+*/
 
-// As this is a baseline for creating a distributed version of word2vec in Chapel,
-// this translation biases towards lexical equivalence versus performance.
 use BlockDist, Logging, Time, PrivateDist, VisualDebug;
 
 type elemType = real(64);
@@ -23,17 +23,18 @@ config const read_vocab_file = "";
 config const output_file: string = "";
 config const hs = 0;
 config const negative = 5;
-config const iterations = 6;
-config const batch_size = 2;
+config const iterations = 100000;
+config const batch_size = 500;
 config const window = 5;
 config const cbow = 1;
 config const binary = 0;
 config const classes = 0;
-config var alpha = 0.025 * 2;
+config var alpha = 0.05; //0.025 * 2;
 config const sample = 1e-3;
 config const size = 100;
 config const debug_mode = 2;
 config const num_threads = here.maxTaskPar;
+/*config const master_step = 0.5;*/
 
 const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
@@ -47,6 +48,13 @@ const MyLocales: [MyLocaleView] locale = reshape(Locales, MyLocaleView);
 var word_count_actual_domain = {0..#numLocales, 0..#num_threads};
 var word_count_actual_domain_space = word_count_actual_domain dmapped Block(boundingBox=word_count_actual_domain, targetLocales=MyLocales);
 var word_count_actual: [word_count_actual_domain_space] int;
+
+var ssyn0Domain: domain(2);
+var ssyn0: [ssyn0Domain] real;
+var ssyn1Domain: domain(2);
+var ssyn1: [ssyn1Domain] real;
+var ssyn1degDomain: domain(2);
+var ssyn1neg: [ssyn1degDomain] real;
 
 var statsTimer: Timer;
 var statsTimerStart: real(64);
@@ -541,14 +549,43 @@ class VocabContext {
   }
 }
 
+class ModelTaskContext {
+  var trainFileName: string;
+  var id: int;
+  var tid: int;
+  var next_random: uint(64) = tid: uint(64);
+  var word_count: uint(64);
+  var last_word_count: uint(64);
+  var trainFile = open(trainFileName, iomode.r);
+  const fileChunkSize = trainFile.length() / numLocales;
+  const taskFileChunkSize = fileChunkSize / num_threads;
+  const seekStart = fileChunkSize * id + taskFileChunkSize * tid;
+  const seekStop = seekStart + taskFileChunkSize;
+  var reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop, locking=false);
+
+  proc init() {
+    reader.lock();
+    reader._mark();
+  }
+
+  proc reset() {
+    reader._revert();
+    init();
+  }
+
+  proc close() {
+    reader._revert();
+    reader.close();
+    trainFile.close();
+  }
+}
+
 class NetworkContext {
   var vocabContext: VocabContext;
   var layer1_size: int;
   var hs: int;
   var negative: int;
   var alpha: real;
-
-  var next_random_arr: [num_threads] uint(64);
 
   const starting_alpha: real = alpha;
 
@@ -575,14 +612,13 @@ class NetworkContext {
   var onloczeroDomain: domain(2) = syn0Domain dmapped Block(boundingBox=syn0Domain, targetLocales=ZeroLocales);
   var onloczero: [onloczeroDomain] elemType;
 
-  var total_word_count: int;
+  var total_word_count: uint(64);
 
   proc InitExpTable() {
     for i in 0..#EXP_TABLE_SIZE {
       expTable[i] = exp((i / EXP_TABLE_SIZE:real * 2 - 1) * MAX_EXP); // Precompute the exp() table
       expTable[i] = expTable[i] / (expTable[i] + 1);                   // Precompute f(x) = x / (x + 1)
     }
-    for i in 0..#num_threads do next_random_arr[i] = i:uint(64);
   }
 
   proc RandomizeNetwork() {
@@ -616,120 +652,112 @@ class NetworkContext {
 
   proc update(latest: NetworkContext) {
     const tid = latest.locale.id;
+    const fudge_factor = 1e-6;
+
     info("starting update", tid);
     if (here.id != 0) then halt("update should occur on locale 0");
-    // TODO: adagrad
+
+    // based on https://github.com/dirkneumann/deepdist/blob/master/examples/word2vec_adagrad.py
     {
-      onloczero[syn0Domain] = latest.syn0[syn0Domain];
-      onloczero[syn0Domain] -= syn0[syn0Domain];
-      onloczero[syn0Domain] /= numLocales;
-      syn0[syn0Domain] += onloczero[syn0Domain];
+      const dom = syn0Domain;
+      onloczero[dom] = latest.syn0[dom];
+      onloczero[dom] -= syn0[dom];
+      onloczero[dom] /= latest.alpha;
+      ssyn0[syn0Domain] += onloczero[dom] ** 2;
+      const adaAlpha = latest.alpha / (fudge_factor + sqrt(ssyn0));
+      syn0[dom] += onloczero[dom] * adaAlpha;
     }
     if (hs) then {
-      onloczero[syn1Domain] = latest.syn1[syn1Domain];
-      onloczero[syn1Domain] -= syn1[syn1Domain];
-      onloczero[syn1Domain] /= numLocales;
-      syn1[syn1Domain] += onloczero[syn1Domain];
+      const dom = syn1Domain;
+      onloczero[dom] = latest.syn1[dom];
+      onloczero[dom] -= syn1[dom];
+      onloczero[dom] /= latest.alpha;
+      ssyn1[syn1Domain] += onloczero[dom] ** 2;
+      const adaAlpha = latest.alpha / (fudge_factor + sqrt(ssyn1));
+      syn1[dom] += onloczero[dom] * adaAlpha;
     }
     if (negative) then {
-      onloczero[syn1negDomain] = latest.syn1neg[syn1negDomain];
-      onloczero[syn1negDomain] -= syn1neg[syn1negDomain];
-      onloczero[syn1negDomain] /= numLocales;
-      syn1neg[syn1negDomain] += onloczero[syn1negDomain];
+      const dom = syn1negDomain;
+      onloczero[dom] = latest.syn1neg[dom];
+      onloczero[dom] -= syn1neg[dom];
+      onloczero[dom] /= latest.alpha;
+      ssyn1neg[dom] += onloczero[dom] ** 2;
+      const adaAlpha = latest.alpha / (fudge_factor + sqrt(ssyn1neg));
+      syn1neg[dom] += onloczero[dom] * adaAlpha;
     }
+
     info("stopping update", tid);
   }
 
-  proc TrainModelThread(tf: string, tid: int, batch_size: int) {
+  proc TrainModelThread(mt: ModelTaskContext, batch_size: int) {
     var a, b, d, cw, word, last_word, sentence_length, sentence_position: int(64);
-    var word_count, last_word_count: int(64);
     var sen: [0..#(MAX_SENTENCE_LENGTH + 1)] int;
     var l1, l2, c, target, labelx: int(64);
-    var local_iter = batch_size;
-    var next_random: uint(64) = next_random_arr[tid];//tid:uint(64);
+    var sentence_count = 0;
     var f, g: real;
     var atEOF = false;
 
-    const id = here.id;
-    const wordsPerTask = (train_words / numLocales) / num_threads;
     const updateInterval = 10000; //wordsPerTask / 20;
 
     var neu1: [LayerSpace] elemType;
     var neu1e: [LayerSpace] elemType;
 
-    var trainFile = open(tf, iomode.r);
-    const fileChunkSize = trainFile.length() / numLocales;
-    const taskFileChunkSize = fileChunkSize / num_threads;
-    const seekStart = fileChunkSize * id + taskFileChunkSize * tid;
-    const seekStop = seekStart + taskFileChunkSize;
-    var reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop, locking=false);
-    reader.lock();
-    reader._mark();
-
     local while (1) {
-      if (word_count - last_word_count > updateInterval) {
-        var diff = word_count - last_word_count;
+      if (mt.word_count - mt.last_word_count > updateInterval) {
+        var diff = mt.word_count - mt.last_word_count;
         total_word_count += diff;
-        last_word_count = word_count;
-        if tid == 0 {
-          var fauxSum = total_word_count;
-          if (id == 0) then reportStats(total_word_count, train_words / numLocales, alpha);
-          alpha = starting_alpha * (1 - (fauxSum / (iterations * (train_words/numLocales) + 1):real));
+        mt.last_word_count = mt.word_count;
+        if mt.tid == 0 {
+          if (mt.id == 0) then reportStats(total_word_count: int, train_words / numLocales, alpha);
+          alpha = starting_alpha * (1 - (total_word_count / (iterations * (train_words/numLocales) + 1):real));
           if (alpha < starting_alpha * 0.0001) then alpha = starting_alpha * 0.0001;
         }
       }
       if (sentence_length == 0) {
+        if (sentence_count >= batch_size) {
+          break;
+        }
+
         while (1) {
-          word = vocabContext.ReadWordIndex(reader);
+          word = vocabContext.ReadWordIndex(mt.reader);
           if (word == -2) {
             /*info("atEOF", tid);*/
             atEOF = true;
             break;
           }
           if (word == -1) then continue;
-          word_count += 1;
+          mt.word_count += 1;
           if (word == 0) then break;
           // The subsampling randomly discards frequent words while keeping the ranking same
           if (sample > 0) {
             var ran = (sqrt(vocabContext.vocab[word].cn / (sample * train_words):real) + 1) * (sample * vocabContext.train_words):real / vocabContext.vocab[word].cn;
-            next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
-            if (ran < (next_random & 0xFFFF):real / 65536:real) then continue;
+            mt.next_random = (mt.next_random * 25214903917:uint(64) + 11):uint(64);
+            if (ran < (mt.next_random & 0xFFFF):real / 65536:real) then continue;
           }
           sen[sentence_length] = word;
           sentence_length += 1;
           if (sentence_length >= MAX_SENTENCE_LENGTH) then break;
         }
         sentence_position = 0;
+        sentence_count += 1;
       }
-      if (atEOF || (word_count > wordsPerTask)) {
-        /*info("at limit", tid);*/
-        total_word_count += word_count - last_word_count;
-        local_iter -= 1;
-        if (local_iter == 0) {
-          /*info("breaking", tid);*/
-          break;
-        }
-        word_count = 0;
-        last_word_count = 0;
+      if (atEOF) {
+        total_word_count += mt.word_count - mt.last_word_count;
+        mt.word_count = 0;
+        mt.last_word_count = 0;
+        mt.reset();
         sentence_length = 0;
-        /*info("rewinding file", tid);*/
-        reader._revert();
-        reader.lock();
-        reader._mark();
-        /*reader.close();
-        reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop, locking=false);*/
         atEOF = false;
-        /*info("restarting", tid);*/
         continue;
       }
       word = sen[sentence_position];
       if (word == -1) then continue;
-      local for c in LayerSpace {
+      for c in LayerSpace {
         neu1[c] = 0:elemType;
         neu1e[c] = 0:elemType;
       }
-      next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
-      b = (next_random % window: uint(64)):int(64);
+      mt.next_random = (mt.next_random * 25214903917:uint(64) + 11):uint(64);
+      b = (mt.next_random % window: uint(64)):int(64);
       if (cbow) {  //train the cbow architecture
         // in -> hidden
         cw = 0;
@@ -739,7 +767,7 @@ class NetworkContext {
           if (c >= sentence_length) then continue;
           last_word = sen[c];
           if (last_word == -1) then continue;
-          local for c in LayerSpace do neu1[c] += syn0[0,c + last_word * layer1_size];
+          for c in LayerSpace do neu1[c] += syn0[0,c + last_word * layer1_size];
           cw += 1;
         }
         if (cw) {
@@ -765,9 +793,9 @@ class NetworkContext {
               target = word;
               labelx = 1;
             } else {
-              next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
-              target = vocabContext.table[((next_random >> 16) % vocabContext.table_size:uint(64)):int];
-              if (target == 0) then target = (next_random % (vocab_size - 1):uint(64) + 1):int;
+              mt.next_random = (mt.next_random * 25214903917:uint(64) + 11):uint(64);
+              target = vocabContext.table[((mt.next_random >> 16) % vocabContext.table_size:uint(64)):int];
+              if (target == 0) then target = (mt.next_random % (vocab_size - 1):uint(64) + 1):int;
               if (target == word) then continue;
               labelx = 0;
             }
@@ -787,7 +815,7 @@ class NetworkContext {
             if (c >= sentence_length) then continue;
             last_word = sen[c];
             if (last_word == -1) then continue;
-            local for c in LayerSpace do syn0[0,c + last_word * layer1_size] += neu1e[c];
+            for c in LayerSpace do syn0[0,c + last_word * layer1_size] += neu1e[c];
           }
         }
       } else {  //train skip-gram
@@ -821,9 +849,9 @@ class NetworkContext {
               target = word;
               labelx = 1;
             } else {
-              next_random = (next_random * 25214903917:uint(64) + 11):uint(64);
-              target = vocabContext.table[((next_random >> 16) % vocabContext.table_size:uint(64)):int];
-              if (target == 0) then target = (next_random % (vocab_size - 1):uint(64) + 1):int;
+              mt.next_random = (mt.next_random * 25214903917:uint(64) + 11):uint(64);
+              target = vocabContext.table[((mt.next_random >> 16) % vocabContext.table_size:uint(64)):int];
+              if (target == 0) then target = (mt.next_random % (vocab_size - 1):uint(64) + 1):int;
               if (target == word) then continue;
               labelx = 0;
             }
@@ -846,12 +874,6 @@ class NetworkContext {
         continue;
       }
     }
-    next_random_arr[tid] = next_random;
-    info("closing ", tid);
-    reader._revert();
-    reader.close();
-    trainFile.close();
-    info("done ", tid);
   }
 }
 
@@ -886,15 +908,32 @@ proc TrainModel() {
     }
   }
 
+  ssyn0Domain = network.syn0Domain;
+  ssyn1Domain = network.syn1Domain;
+  ssyn1degDomain = network.syn1negDomain;
+
+  ssyn0[network.syn0Domain] = 0;
+  ssyn1[network.syn1Domain] = 0;
+  ssyn1neg[network.syn1negDomain] = 0;
+
+  var taskContexts: [PrivateSpace] [0..#num_threads] ModelTaskContext;
+
+  for loc in Locales do on loc {
+    for tid in 0..#num_threads {
+      taskContexts[here.id][tid] = new ModelTaskContext(train_file.localize(), here.id, tid);
+      taskContexts[here.id][tid].init();
+    }
+  }
+
   // run on a single locale using all threads available
-  for batch in 0..#iterations by batch_size {
+  for batch in 0..#iterations {
     info("computing ",batch);
     startVdebug("network");
     forall loc in Locales do on loc {
       forall tid in 0..#num_threads {
-        info("in loc ", tid);
-        networkArr[here.id].TrainModelThread(train_file.localize(), tid, batch_size);
-        info("out loc ", tid);
+        /*info("in loc ", tid);*/
+        networkArr[here.id].TrainModelThread(taskContexts[here.id][tid], batch_size);
+        /*info("out loc ", tid);*/
       }
     }
     stopVdebug();
@@ -903,6 +942,12 @@ proc TrainModel() {
     for id in 0..(numLocales-1) do referenceNetwork.update(networkArr[id]);
     for loc in Locales do on loc do networkArr[here.id].copy(referenceNetwork);
     stopVdebug();
+  }
+
+  for loc in Locales do on loc {
+    for tid in 0..#num_threads {
+      taskContexts[here.id][tid].close();
+    }
   }
 
   info("writing results");
