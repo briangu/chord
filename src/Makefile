@@ -1,10 +1,13 @@
 CC=clang
 CFLAGS=-I$(IDIR) -I.
 
-all: bin word2vec_dsgd
+all: bin word2vec_dmapped
 
 bin:
 	mkdir -p ../bin
+
+word2vec_dmapped: word2vec_dmapped.chpl
+	chpl --print-passes --fast -o ../bin/word2vec word2vec_dmapped.chpl
 
 word2vec_dsgd: word2vec_dsgd.chpl
 	chpl --print-passes --fast -o ../bin/word2vec word2vec_dsgd.chpl

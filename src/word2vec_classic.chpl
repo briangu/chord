@@ -501,7 +501,7 @@ proc TrainModelThread(tf: string, id: int) {
   var reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop, locking=false);
 
   t.start();
-  var start = t.elapsed(TimeUnits.microseconds);
+  const start = t.elapsed(TimeUnits.microseconds);
 
   while (1) {
     if (word_count - last_word_count > 10000) {
