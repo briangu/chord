@@ -1,7 +1,7 @@
 /*
   Distributed word2vec using native Chapel domain maps.
 */
-use CyclicDist, Logging, Time, PrivateDist, VisualDebug;
+use BlockDist, Logging, Time, PrivateDist, VisualDebug;
 
 type elemType = real(64);
 
@@ -81,7 +81,7 @@ class VocabContext {
     this.vocab_max_size = vocabContext.vocab_max_size;
     this.vocabDomain = {vocabContext.vocabDomain.low..vocabContext.vocabDomain.high};
 
-    forall i in 0..#this.vocab_size {
+    all i in 0..#this.vocab_size {
       this.vocab[i].len = vocabContext.vocab[i].len;
       this.vocab[i].word[0..#this.vocab[i].len] = vocabContext.vocab[i].word[0..#this.vocab[i].len];
       this.vocab[i].cn = vocabContext.vocab[i].cn;
@@ -512,14 +512,17 @@ class NetworkContext {
   const vocab_size = vocabContext.vocab_size;
   const train_words = vocabContext.train_words;
 
+  const MyLocaleView = {0..#numLocales, 1..1};
+  const MyLocales: [MyLocaleView] locale = reshape(Locales, MyLocaleView);
+
   const syn0Domain = {0..#vocab_size,0..#layer1_size};
-  const syn0DomainSpace = syn0Domain; // dmapped Cyclic(startIdx=syn0Domain.low);
+  const syn0DomainSpace = syn0Domain dmapped Block(boundingBox=syn0Domain, targetLocales=MyLocales);
   var syn0: [syn0DomainSpace] elemType;
   const syn1Domain = if (hs) then syn0Domain else {0..#1,0..#1};
-  const syn1DomainSpace = syn1Domain; // dmapped Cyclic(startIdx=syn0Domain.low);
+  const syn1DomainSpace = syn1Domain dmapped Block(boundingBox=syn1Domain, targetLocales=MyLocales);
   var syn1: [syn1DomainSpace] elemType;
   const syn1negDomain = if (negative) then syn0Domain else {0..#1,0..#1};
-  const syn1negDomainSpace = syn1negDomain; // dmapped Cyclic(startIdx=syn0Domain.low);
+  const syn1negDomainSpace = syn1negDomain dmapped Block(boundingBox=syn1negDomain, targetLocales=MyLocales);
   var syn1neg: [syn1negDomainSpace] elemType;
 
   var expTable: [0..#(EXP_TABLE_SIZE+1)] real;
@@ -592,7 +595,7 @@ class NetworkContext {
     t.start();
     const start = t.elapsed(TimeUnits.microseconds);
 
-    local while (1) {
+    while (1) {
       if (word_count - last_word_count > updateInterval) {
         word_count_actual += word_count - last_word_count;
         last_word_count = word_count;
@@ -653,7 +656,7 @@ class NetworkContext {
       }
       word = sen[sentence_position];
       if (word == -1) then continue;
-      local for c in LayerSpace {
+      for c in LayerSpace {
         neu1[c] = 0:elemType;
         neu1e[c] = 0:elemType;
       }
@@ -668,7 +671,7 @@ class NetworkContext {
           if (c >= sentence_length) then continue;
           last_word = sen[c];
           if (last_word == -1) then continue;
-          local for c in LayerSpace do neu1[c] += syn0[last_word, c];
+          for c in LayerSpace do neu1[c] += syn0[last_word, c];
           cw += 1;
         }
         if (cw) {
@@ -716,7 +719,7 @@ class NetworkContext {
             if (c >= sentence_length) then continue;
             last_word = sen[c];
             if (last_word == -1) then continue;
-            local for c in LayerSpace do syn0[last_word,c] += neu1e[c];
+            for c in LayerSpace do syn0[last_word,c] += neu1e[c];
           }
         }
       } else {  //train skip-gram
