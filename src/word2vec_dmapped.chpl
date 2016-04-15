@@ -515,7 +515,7 @@ class NetworkContext {
   const MyLocaleView = {0..#numLocales, 1..1};
   const MyLocales: [MyLocaleView] locale = reshape(Locales, MyLocaleView);
 
-  const syn0Domain = {0..#vocab_size,0..#layer1_size};
+  const syn0Domain = {0..#vocab_size, 0..#layer1_size};
   const syn0DomainSpace = syn0Domain dmapped Block(boundingBox=syn0Domain, targetLocales=MyLocales);
   var syn0: [syn0DomainSpace] elemType;
   const syn1Domain = if (hs) then syn0Domain else {0..#1,0..#1};
@@ -595,7 +595,7 @@ class NetworkContext {
     t.start();
     const start = t.elapsed(TimeUnits.microseconds);
 
-    while (1) {
+    local while (1) {
       if (word_count - last_word_count > updateInterval) {
         word_count_actual += word_count - last_word_count;
         last_word_count = word_count;
