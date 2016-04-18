@@ -595,7 +595,7 @@ class NetworkContext {
     t.start();
     const start = t.elapsed(TimeUnits.microseconds);
 
-    local while (1) {
+    while (1) {
       if (word_count - last_word_count > updateInterval) {
         word_count_actual += word_count - last_word_count;
         last_word_count = word_count;
