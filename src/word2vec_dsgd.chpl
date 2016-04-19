@@ -76,16 +76,16 @@ proc startStats() {
   return sum;
 }*/
 
-proc reportStats(sum, train_words, alpha) {
+proc reportStats(sum, max_locale_sentences, alpha) {
   var now = statsTimer.elapsed(TimeUnits.milliseconds);
   if ((now - lastTimerValue) > 1000) {
     lastTimerValue = now;
     if (sum > 0) {
       writef("\rAlpha: %r  Progress: %0.2r%%  Words/sec: %rk  Words/thread/sec: %rk  ",
             alpha,
-            (sum / (iterations * train_words + 1):real) * 100,
+            (sum / max_locale_sentences:real) * 100,
             sum / ((now + 1) / 1000) / 1000,
-            sum / (numLocales * num_threads) / ((now + 1) / 1000) / 1000);
+            (sum * numLocales) / ((now + 1) / 1000) / 1000);
       stdout.flush();
     }
   }
@@ -612,6 +612,7 @@ class NetworkContext {
   var onloczeroDomain: domain(2) = syn0Domain dmapped Block(boundingBox=syn0Domain, targetLocales=ZeroLocales);
   var onloczero: [onloczeroDomain] elemType;
 
+  var total_sentence_count: uint(64);
   var total_word_count: uint(64);
 
   proc InitExpTable() {
@@ -662,28 +663,22 @@ class NetworkContext {
       const dom = syn0Domain;
       onloczero[dom] = latest.syn0[dom];
       onloczero[dom] -= syn0[dom];
-      onloczero[dom] /= latest.alpha;
-      ssyn0[syn0Domain] += onloczero[dom] ** 2;
-      const adaAlpha = latest.alpha / (fudge_factor + sqrt(ssyn0));
-      syn0[dom] += onloczero[dom] * adaAlpha;
+      onloczero[dom] /= numLocales; 
+      syn0[dom] += onloczero[dom];
     }
     if (hs) then {
       const dom = syn1Domain;
       onloczero[dom] = latest.syn1[dom];
       onloczero[dom] -= syn1[dom];
-      onloczero[dom] /= latest.alpha;
-      ssyn1[syn1Domain] += onloczero[dom] ** 2;
-      const adaAlpha = latest.alpha / (fudge_factor + sqrt(ssyn1));
-      syn1[dom] += onloczero[dom] * adaAlpha;
+      onloczero[dom] /= numLocales;
+      syn1[dom] += onloczero[dom];
     }
     if (negative) then {
       const dom = syn1negDomain;
       onloczero[dom] = latest.syn1neg[dom];
       onloczero[dom] -= syn1neg[dom];
-      onloczero[dom] /= latest.alpha;
-      ssyn1neg[dom] += onloczero[dom] ** 2;
-      const adaAlpha = latest.alpha / (fudge_factor + sqrt(ssyn1neg));
-      syn1neg[dom] += onloczero[dom] * adaAlpha;
+      onloczero[dom] /= numLocales;
+      syn1neg[dom] += onloczero[dom];
     }
 
     info("stopping update", tid);
@@ -708,8 +703,9 @@ class NetworkContext {
         total_word_count += diff;
         mt.last_word_count = mt.word_count;
         if mt.tid == 0 {
-          if (mt.id == 0) then reportStats(total_word_count: int, train_words / numLocales, alpha);
-          alpha = starting_alpha * (1 - (total_word_count / (iterations * (train_words/numLocales) + 1):real));
+          const max_locale_sentences = ((iterations * batch_size * num_threads) / numLocales:real);
+          if (mt.id == 0) then reportStats(total_sentence_count: int, max_locale_sentences, alpha);
+          alpha = starting_alpha * (1 - (total_sentence_count / max_locale_sentences:real));
           if (alpha < starting_alpha * 0.0001) then alpha = starting_alpha * 0.0001;
         }
       }
@@ -740,6 +736,7 @@ class NetworkContext {
         }
         sentence_position = 0;
         sentence_count += 1;
+	total_sentence_count += 1;
       }
       if (atEOF) {
         total_word_count += mt.word_count - mt.last_word_count;
@@ -932,7 +929,7 @@ proc TrainModel() {
     forall loc in Locales do on loc {
       forall tid in 0..#num_threads {
         /*info("in loc ", tid);*/
-        networkArr[here.id].TrainModelThread(taskContexts[here.id][tid], batch_size);
+        networkArr[here.id].TrainModelThread(taskContexts[here.id][tid], batch_size/num_threads);
         /*info("out loc ", tid);*/
       }
     }
