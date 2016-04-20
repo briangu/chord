@@ -36,6 +36,7 @@ config const size = 100;
 config const debug_mode = 2;
 config const num_threads = here.maxTaskPar;
 /*config const master_step = 0.5;*/
+cofnig const update_alpha = 256.0;
 
 const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
@@ -661,7 +662,7 @@ class NetworkContext {
     info("starting update", tid);
     if (here.id != 0) then halt("update should occur on locale 0");
 
-    const update_alpha = 256.0; //max(min_alpha, latest.alpha * (1.0 - 1.0 * latest.total_sentence_count / latest.max_locale_sentences));
+    /*const update_alpha = 256.0; //max(min_alpha, latest.alpha * (1.0 - 1.0 * latest.total_sentence_count / latest.max_locale_sentences));*/
 
     // based on https://github.com/dirkneumann/deepdist/blob/master/examples/word2vec_adagrad.py
     {
@@ -670,7 +671,7 @@ class NetworkContext {
       onloczero[dom] -= syn0[dom];
       ssyn0[dom] += onloczero[dom] ** 2;
       const adaAlpha = update_alpha / (fudge_factor + sqrt(ssyn0));
-      syn0[dom] += onloczero[dom] * onloczero[dom] * adaAlpha;
+      syn0[dom] += onloczero[dom] * adaAlpha;
     }
     if (hs) then {
       const dom = syn1Domain;
@@ -678,7 +679,7 @@ class NetworkContext {
       onloczero[dom] -= syn1[dom];
       ssyn1[dom] += onloczero[dom] ** 2;
       const adaAlpha = update_alpha / (fudge_factor + sqrt(ssyn1));
-      syn1[dom] += onloczero[dom] * onloczero[dom] * adaAlpha;
+      syn1[dom] += onloczero[dom] * adaAlpha;
     }
     if (negative) then {
       const dom = syn1negDomain;
@@ -686,7 +687,7 @@ class NetworkContext {
       onloczero[dom] -= syn1neg[dom];
       ssyn1neg[dom] += onloczero[dom] ** 2;
       const adaAlpha = alpha / (fudge_factor + sqrt(ssyn1neg));
-      syn1neg[dom] += onloczero[dom] * onloczero[dom] * adaAlpha;
+      syn1neg[dom] += onloczero[dom] * adaAlpha;
     }
 
     info("stopping update", tid);
