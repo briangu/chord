@@ -30,6 +30,7 @@ config const cbow = 1;
 config const binary = 0;
 config const classes = 0;
 config var alpha = 0.05; //0.025 * 2;
+config const min_alpha = 0.0001;
 config const sample = 1e-3;
 config const size = 100;
 config const debug_mode = 2;
@@ -615,6 +616,8 @@ class NetworkContext {
   var total_sentence_count: uint(64);
   var total_word_count: uint(64);
 
+  const max_locale_sentences = ((iterations * batch_size) / numLocales:real);
+
   proc InitExpTable() {
     for i in 0..#EXP_TABLE_SIZE {
       expTable[i] = exp((i / EXP_TABLE_SIZE:real * 2 - 1) * MAX_EXP); // Precompute the exp() table
@@ -658,27 +661,32 @@ class NetworkContext {
     info("starting update", tid);
     if (here.id != 0) then halt("update should occur on locale 0");
 
+    const alpha = max(min_alpha, latest.alpha * (1.0 - 1.0 * latest.total_sentence_count / latest.max_locale_sentences));
+
     // based on https://github.com/dirkneumann/deepdist/blob/master/examples/word2vec_adagrad.py
     {
       const dom = syn0Domain;
       onloczero[dom] = latest.syn0[dom];
       onloczero[dom] -= syn0[dom];
-      onloczero[dom] /= numLocales;
-      syn0[dom] += onloczero[dom];
+      ssyn0[dom] += (onloczero[dom] / alpha) ** 2;
+      const adaAlpha = alpha / (fudge_factor + sqrt(ssyn0));
+      syn0[dom] += onloczero[dom] * (adaAlpha / alpha);
     }
     if (hs) then {
       const dom = syn1Domain;
       onloczero[dom] = latest.syn1[dom];
       onloczero[dom] -= syn1[dom];
-      onloczero[dom] /= numLocales;
-      syn1[dom] += onloczero[dom];
+      ssyn1[dom] += (onloczero[dom] / alpha) ** 2;
+      const adaAlpha = alpha / (fudge_factor + sqrt(ssyn1));
+      syn1[dom] += onloczero[dom] * (adaAlpha / alpha);
     }
     if (negative) then {
       const dom = syn1negDomain;
       onloczero[dom] = latest.syn1neg[dom];
       onloczero[dom] -= syn1neg[dom];
-      onloczero[dom] /= numLocales;
-      syn1neg[dom] += onloczero[dom];
+      ssyn1neg[dom] += (onloczero[dom] / alpha) ** 2;
+      const adaAlpha = alpha / (fudge_factor + sqrt(ssyn1neg));
+      syn1neg[dom] += onloczero[dom] * (adaAlpha / alpha);
     }
 
     info("stopping update", tid);
@@ -691,7 +699,6 @@ class NetworkContext {
     info("starting update", tid);
     if (here.id != 0) then halt("update should occur on locale 0");
 
-    // based on https://github.com/dirkneumann/deepdist/blob/master/examples/word2vec_adagrad.py
     {
       const dom = syn0Domain;
       onloczero[dom] = latest.syn0[dom];
@@ -736,10 +743,9 @@ class NetworkContext {
         total_word_count += diff;
         mt.last_word_count = mt.word_count;
         if mt.tid == 0 {
-          const max_locale_sentences = ((iterations * batch_size * num_threads) / numLocales:real);
           if (mt.id == 0) then reportStats(total_sentence_count: int, max_locale_sentences, alpha);
           alpha = starting_alpha * (1 - (total_sentence_count / max_locale_sentences:real));
-          if (alpha < starting_alpha * 0.0001) then alpha = starting_alpha * 0.0001;
+          if (alpha < starting_alpha * min_alpha) then alpha = starting_alpha * min_alpha;
         }
       }
       if (sentence_length == 0) {
@@ -941,10 +947,6 @@ proc TrainModel() {
   ssyn0Domain = network.syn0Domain;
   ssyn1Domain = network.syn1Domain;
   ssyn1degDomain = network.syn1negDomain;
-
-  ssyn0[network.syn0Domain] = 0;
-  ssyn1[network.syn1Domain] = 0;
-  ssyn1neg[network.syn1negDomain] = 0;
 
   var taskContexts: [PrivateSpace] [0..#num_threads] ModelTaskContext;
 
