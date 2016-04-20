@@ -36,7 +36,7 @@ config const size = 100;
 config const debug_mode = 2;
 config const num_threads = here.maxTaskPar;
 /*config const master_step = 0.5;*/
-cofnig const update_alpha = 256.0;
+config const update_alpha = 256.0;
 
 const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
