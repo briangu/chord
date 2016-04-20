@@ -663,7 +663,40 @@ class NetworkContext {
       const dom = syn0Domain;
       onloczero[dom] = latest.syn0[dom];
       onloczero[dom] -= syn0[dom];
-      onloczero[dom] /= numLocales; 
+      onloczero[dom] /= numLocales;
+      syn0[dom] += onloczero[dom];
+    }
+    if (hs) then {
+      const dom = syn1Domain;
+      onloczero[dom] = latest.syn1[dom];
+      onloczero[dom] -= syn1[dom];
+      onloczero[dom] /= numLocales;
+      syn1[dom] += onloczero[dom];
+    }
+    if (negative) then {
+      const dom = syn1negDomain;
+      onloczero[dom] = latest.syn1neg[dom];
+      onloczero[dom] -= syn1neg[dom];
+      onloczero[dom] /= numLocales;
+      syn1neg[dom] += onloczero[dom];
+    }
+
+    info("stopping update", tid);
+  }
+
+  proc updateClassic(latest: NetworkContext) {
+    const tid = latest.locale.id;
+    const fudge_factor = 1e-6;
+
+    info("starting update", tid);
+    if (here.id != 0) then halt("update should occur on locale 0");
+
+    // based on https://github.com/dirkneumann/deepdist/blob/master/examples/word2vec_adagrad.py
+    {
+      const dom = syn0Domain;
+      onloczero[dom] = latest.syn0[dom];
+      onloczero[dom] -= syn0[dom];
+      onloczero[dom] /= numLocales;
       syn0[dom] += onloczero[dom];
     }
     if (hs) then {
