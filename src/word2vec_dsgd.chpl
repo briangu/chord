@@ -667,26 +667,29 @@ class NetworkContext {
     {
       const dom = syn0Domain;
       onloczero[dom] = latest.syn0[dom];
-      onloczero[dom] -= syn0[dom];
-      ssyn0[dom] += (onloczero[dom] / alpha) ** 2;
-      const adaAlpha = alpha / (fudge_factor + sqrt(ssyn0));
-      syn0[dom] += onloczero[dom] * (adaAlpha / alpha);
+      onloczero[dom] -= syn0[dom];                                25
+      onloczero[dom] /= alpha;                                    25 / 0.04
+      ssyn0[dom] += onloczero[dom] ** 2;                          (25 / 0.04) ** 2
+      const adaAlpha = alpha / (fudge_factor + sqrt(ssyn0));      0.04 / (25 / 0.04)
+      syn0[dom] += onloczero[dom] * onloczero[dom] * (adaAlpha / alpha);           25 * (25 / 0.04) * ((0.04 / (25 / 0.04)) / 0.04)
     }
     if (hs) then {
       const dom = syn1Domain;
       onloczero[dom] = latest.syn1[dom];
       onloczero[dom] -= syn1[dom];
+      onloczero[dom] /= alpha;
       ssyn1[dom] += (onloczero[dom] / alpha) ** 2;
       const adaAlpha = alpha / (fudge_factor + sqrt(ssyn1));
-      syn1[dom] += onloczero[dom] * (adaAlpha / alpha);
+      syn1[dom] += onloczero[dom] * onloczero[dom] * (adaAlpha / alpha);
     }
     if (negative) then {
       const dom = syn1negDomain;
       onloczero[dom] = latest.syn1neg[dom];
       onloczero[dom] -= syn1neg[dom];
+      onloczero[dom] /= alpha;
       ssyn1neg[dom] += (onloczero[dom] / alpha) ** 2;
       const adaAlpha = alpha / (fudge_factor + sqrt(ssyn1neg));
-      syn1neg[dom] += onloczero[dom] * (adaAlpha / alpha);
+      syn1neg[dom] += onloczero[dom] * onloczero[dom] * (adaAlpha / alpha);
     }
 
     info("stopping update", tid);
