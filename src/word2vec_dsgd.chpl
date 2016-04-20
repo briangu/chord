@@ -85,7 +85,7 @@ proc reportStats(sum, max_locale_sentences, alpha) {
     if (sum > 0) {
       writef("\rAlpha: %r  Progress: %0.2r%%  Words/sec: %rk  Words/thread/sec: %rk  ",
             alpha,
-            (sum / max_locale_sentences:real) * 100,
+            (sum / max_locale_sentences:real / numLocales) * 100,
             sum / ((now + 1) / 1000) / 1000,
             (sum * numLocales) / ((now + 1) / 1000) / 1000);
       stdout.flush();
@@ -655,7 +655,7 @@ class NetworkContext {
     this.syn1neg[this.syn1negDomain] = networkContext.syn1neg[this.syn1negDomain];
   }
 
-  proc update(latest: NetworkContext) {
+  proc updateAdaGrad(latest: NetworkContext) {
     const tid = latest.locale.id;
     const fudge_factor = 1e-6;
 
@@ -693,7 +693,7 @@ class NetworkContext {
     info("stopping update", tid);
   }
 
-  proc updateClassic(latest: NetworkContext) {
+  proc update(latest: NetworkContext) {
     const tid = latest.locale.id;
     const fudge_factor = 1e-6;
 
@@ -745,7 +745,7 @@ class NetworkContext {
         mt.last_word_count = mt.word_count;
         if mt.tid == 0 {
           if (mt.id == 0) then reportStats(total_sentence_count: int, max_locale_sentences, alpha);
-          alpha = starting_alpha * (1 - (total_sentence_count / max_locale_sentences:real));
+          alpha = starting_alpha * (1 - (total_sentence_count / max_locale_sentences:real / numLocales));
           if (alpha < starting_alpha * min_alpha) then alpha = starting_alpha * min_alpha;
         }
       }
