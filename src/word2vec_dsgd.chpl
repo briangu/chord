@@ -36,7 +36,7 @@ config const size = 100;
 config const debug_mode = 2;
 config const num_threads = here.maxTaskPar;
 /*config const master_step = 0.5;*/
-config const update_alpha = 256.0;
+config const update_alpha = 0.01;
 config const use_adagrad = false;
 
 const SPACE = ascii(' '): uint(8);
@@ -691,7 +691,7 @@ class NetworkContext {
     {
       const dom = syn0Domain;
       onloczero[dom] = latest.syn0[dom];
-      onloczero[dom] -= syn0[dom];
+      onloczero[dom] = syn0[dom] - onloczero[dom];
       onloczero[dom] /= masterAlpha;
       ssyn0[dom] += onloczero[dom] ** 2;
       const adaAlpha = masterAlpha / (fudge_factor + sqrt(ssyn0));
@@ -700,7 +700,7 @@ class NetworkContext {
     if (hs) then {
       const dom = syn1Domain;
       onloczero[dom] = latest.syn1[dom];
-      onloczero[dom] -= syn1[dom];
+      onloczero[dom] = syn1[dom] - onloczero[dom];
       onloczero[dom] /= masterAlpha;
       ssyn1[dom] += onloczero[dom] ** 2;
       const adaAlpha = masterAlpha / (fudge_factor + sqrt(ssyn1));
@@ -709,7 +709,7 @@ class NetworkContext {
     if (negative) then {
       const dom = syn1negDomain;
       onloczero[dom] = latest.syn1neg[dom];
-      onloczero[dom] -= syn1neg[dom];
+      onloczero[dom] = syn1neg[dom] - onloczero[dom];
       onloczero[dom] /= masterAlpha;
       ssyn1neg[dom] += onloczero[dom] ** 2;
       const adaAlpha = masterAlpha / (fudge_factor + sqrt(ssyn1neg));
