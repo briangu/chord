@@ -91,12 +91,11 @@ proc reportStats(locale_sentence_count, alpha) {
   var now = statsTimer.elapsed(TimeUnits.milliseconds);
   if ((now - lastTimerValue) > 1000) {
     lastTimerValue = now;
-    writef("\rAlpha: %r  Progress: %0.2r%%  Words/sec: %rk  Words/thread/sec: %rk  %r",
+    writef("\rAlpha: %r  Progress: %0.2r%%  Words/sec: %rk  Words/thread/sec: %rk   ",
           alpha,
           (locale_sentence_count / (max_locale_sentences:real * numLocales)) * 100,
           (locale_sentence_count * numLocales) / ((now + 1) / 1000) / 1000,
-          (locale_sentence_count / num_threads) / ((now + 1) / 1000) / 1000,
-          locale_sentence_count);
+          (locale_sentence_count / num_threads) / ((now + 1) / 1000) / 1000);
     stdout.flush();
   }
 }
@@ -972,11 +971,11 @@ proc TrainModel() {
       var next_random: uint(64) = (id * tid): uint(64);
       /*info("in loc ", tid);*/
       for batch in 0..#iterations {
-        info("computing ",batch);
+        /*info("computing ",batch);*/
         networkArr[here.id].TrainModelThread(taskContexts[here.id][tid], batch_size/num_threads);
         next_random = next_random * 25214903917:uint(64) + 11;
         if (next_random % 3 == 0) then {
-          info("updating");
+          writeln("\nupdating ", here.id);
           on Locales[0] do referenceNetwork.update(networkArr[id]);
           networkArr[id].copy(referenceNetwork);
         }
