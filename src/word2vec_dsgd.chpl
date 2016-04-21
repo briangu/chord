@@ -44,6 +44,8 @@ const CRLF = ascii('\n'): uint(8);
 
 const layer1_size = size;
 
+const max_locale_sentences = ((iterations * batch_size) / numLocales:real);
+
 const MyLocaleView = {0..#numLocales, 1..1};
 const MyLocales: [MyLocaleView] locale = reshape(Locales, MyLocaleView);
 
@@ -68,6 +70,13 @@ proc startStats() {
   lastTimerValue = statsTimerStart;
 }
 
+writeln("max_locale_sentences = ", max_locale_sentences);
+writeln("num_threads = ", num_threads);
+writeln("numLocales = ", numLocales);
+writeln("batch_size = ", batch_size);
+writeln("iterations = ", iterations);
+
+
 /*proc sumWordCountActual(): int {
   var sum: int;
   for i in 0..#numLocales {
@@ -78,18 +87,17 @@ proc startStats() {
   return sum;
 }*/
 
-proc reportStats(sum, max_locale_sentences, alpha) {
+proc reportStats(locale_sentence_count, alpha) {
   var now = statsTimer.elapsed(TimeUnits.milliseconds);
   if ((now - lastTimerValue) > 1000) {
     lastTimerValue = now;
-    if (sum > 0) {
-      writef("\rAlpha: %r  Progress: %0.2r%%  Words/sec: %rk  Words/thread/sec: %rk  ",
-            alpha,
-            (sum / (max_locale_sentences:real * numLocales)) * 100,
-            sum / ((now + 1) / 1000) / 1000,
-            (sum * numLocales) / ((now + 1) / 1000) / 1000);
-      stdout.flush();
-    }
+    writef("\rAlpha: %r  Progress: %0.2r%%  Words/sec: %rk  Words/thread/sec: %rk  %r",
+          alpha,
+          (locale_sentence_count / (max_locale_sentences:real * numLocales)) * 100,
+          (locale_sentence_count * numLocales) / ((now + 1) / 1000) / 1000,
+          (locale_sentence_count / num_threads) / ((now + 1) / 1000) / 1000,
+          locale_sentence_count);
+    stdout.flush();
   }
 }
 
@@ -614,10 +622,8 @@ class NetworkContext {
   var onloczeroDomain: domain(2) = syn0Domain dmapped Block(boundingBox=syn0Domain, targetLocales=ZeroLocales);
   var onloczero: [onloczeroDomain] elemType;
 
-  var total_sentence_count: uint(64);
+  var locale_sentence_count: uint(64);
   var total_word_count: uint(64);
-
-  const max_locale_sentences = ((iterations * batch_size) / numLocales:real);
 
   proc InitExpTable() {
     for i in 0..#EXP_TABLE_SIZE {
@@ -662,7 +668,7 @@ class NetworkContext {
     info("starting update", tid);
     if (here.id != 0) then halt("update should occur on locale 0");
 
-    /*const update_alpha = 256.0; //max(min_alpha, latest.alpha * (1.0 - 1.0 * latest.total_sentence_count / latest.max_locale_sentences));*/
+    /*const update_alpha = 256.0; //max(min_alpha, latest.alpha * (1.0 - 1.0 * latest.max_sentence_count / latest.max_locale_sentences));*/
 
     // based on https://github.com/dirkneumann/deepdist/blob/master/examples/word2vec_adagrad.py
     {
@@ -744,8 +750,8 @@ class NetworkContext {
         total_word_count += diff;
         mt.last_word_count = mt.word_count;
         if mt.tid == 0 {
-          if (mt.id == 0) then reportStats(total_sentence_count: int, max_locale_sentences, alpha);
-          alpha = starting_alpha * (1 - (total_sentence_count / max_locale_sentences:real * numLocales));
+          if (mt.id == 0) then reportStats(locale_sentence_count: int, alpha);
+          alpha = starting_alpha * (1 - (locale_sentence_count / (max_locale_sentences:real * numLocales)));
           if (alpha < starting_alpha * min_alpha) then alpha = starting_alpha * min_alpha;
         }
       }
@@ -776,7 +782,7 @@ class NetworkContext {
         }
         sentence_position = 0;
         sentence_count += 1;
-	total_sentence_count += 1;
+	      locale_sentence_count += 1;
       }
       if (atEOF) {
         total_word_count += mt.word_count - mt.last_word_count;
