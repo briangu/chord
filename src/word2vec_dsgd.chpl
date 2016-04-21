@@ -686,7 +686,7 @@ class NetworkContext {
     model.syn1 += syn1 * alpha1
     */
 
-    const masterAlpha = max(min_alpha, update_alpha * (1.0 - 1.0 * latest.max_sentence_count / (latest.max_locale_sentences * numLocales)));
+    const masterAlpha = max(min_alpha, update_alpha * (1.0 - 1.0 * latest.locale_sentence_count / (max_locale_sentences * numLocales)));
 
     {
       const dom = syn0Domain;
