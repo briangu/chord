@@ -657,8 +657,8 @@ class NetworkContext {
     if (this.syn1Domain == networkContext.syn1Domain) then halt("syn0Domain not equal");
     if (this.syn1negDomain == networkContext.syn1negDomain) then halt("syn0Domain not equal");*/
     this.syn0[this.syn0Domain] = networkContext.syn0[this.syn0Domain];
-    this.syn1[this.syn1Domain] = networkContext.syn1[this.syn1Domain];
-    this.syn1neg[this.syn1negDomain] = networkContext.syn1neg[this.syn1negDomain];
+    if hs then this.syn1[this.syn1Domain] = networkContext.syn1[this.syn1Domain];
+    if negative then this.syn1neg[this.syn1negDomain] = networkContext.syn1neg[this.syn1negDomain];
   }
 
   proc updateAdaGrad(latest: NetworkContext) {
