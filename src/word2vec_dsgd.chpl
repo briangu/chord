@@ -967,7 +967,7 @@ proc TrainModel() {
   // run on a single locale using all threads available
   for batch in 0..#iterations {
     info("computing ",batch);
-    startVdebug("network");
+    /*startVdebug("network");*/
     forall loc in Locales do on loc {
       forall tid in 0..#num_threads {
         /*info("in loc ", tid);*/
@@ -975,12 +975,12 @@ proc TrainModel() {
         /*info("out loc ", tid);*/
       }
     }
-    stopVdebug();
-    startVdebug("updating");
+    /*stopVdebug();
+    startVdebug("updating");*/
     info("updating");
     for id in 0..(numLocales-1) do referenceNetwork.update(networkArr[id]);
     for loc in Locales do on loc do networkArr[here.id].copy(referenceNetwork);
-    stopVdebug();
+    /*stopVdebug();*/
   }
 
   for loc in Locales do on loc {
