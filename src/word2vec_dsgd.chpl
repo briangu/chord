@@ -967,20 +967,28 @@ proc TrainModel() {
   // run on a single locale using all threads available
   for batch in 0..#iterations {
     info("computing ",batch);
-    startVdebug("network");
+    /*startVdebug("network");*/
     forall loc in Locales do on loc {
+      var next_random: uint(64) = here.id: uint(64);
+
       forall tid in 0..#num_threads {
         /*info("in loc ", tid);*/
         networkArr[here.id].TrainModelThread(taskContexts[here.id][tid], batch_size/num_threads);
+        next_random = next_random * 25214903917:uint(64) + 11;
+        if (next_random % 3 == 0) then do on Locales[0] {
+          info("updating");
+          referenceNetwork.update(networkArr[id]);
+        }
+        networkArr[here.id].copy(referenceNetwork);
         /*info("out loc ", tid);*/
       }
     }
-    stopVdebug();
-    startVdebug("updating");
-    info("updating");
+    /*stopVdebug();*/
+    /*startVdebug("updating");*/
+    /*info("updating");
     for id in 0..(numLocales-1) do referenceNetwork.update(networkArr[id]);
-    for loc in Locales do on loc do networkArr[here.id].copy(referenceNetwork);
-    stopVdebug();
+    for loc in Locales do on loc do networkArr[here.id].copy(referenceNetwork);*/
+    /*stopVdebug();*/
   }
 
   for loc in Locales do on loc {
