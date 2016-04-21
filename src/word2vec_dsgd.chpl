@@ -969,7 +969,7 @@ proc TrainModel() {
   forall loc in Locales do on loc {
     const id = here.id;
     forall tid in 0..#num_threads {
-      var next_random: uint(64) = tid: uint(64);
+      var next_random: uint(64) = (id * tid): uint(64);
       /*info("in loc ", tid);*/
       for batch in 0..#iterations {
         info("computing ",batch);
