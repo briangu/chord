@@ -37,6 +37,7 @@ config const debug_mode = 2;
 config const num_threads = here.maxTaskPar;
 /*config const master_step = 0.5;*/
 config const update_alpha = 256.0;
+config const use_adagrad = false;
 
 const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
@@ -668,31 +669,50 @@ class NetworkContext {
     info("starting update", tid);
     if (here.id != 0) then halt("update should occur on locale 0");
 
-    /*const update_alpha = 256.0; //max(min_alpha, latest.alpha * (1.0 - 1.0 * latest.max_sentence_count / latest.max_locale_sentences));*/
-
     // based on https://github.com/dirkneumann/deepdist/blob/master/examples/word2vec_adagrad.py
+    /*
+    alpha = max(model.min_alpha, model.alpha * (1.0 - 1.0 * model.word_count / model.total_words))
+
+    syn0 = update['syn0'] / alpha
+    syn1 = update['syn1'] / alpha
+
+    model.ssyn0 += syn0 * syn0
+    model.ssyn1 += syn1 * syn1
+
+    alpha0 = alpha / (1e-6 + np.sqrt(model.ssyn0))
+    alpha1 = alpha / (1e-6 + np.sqrt(model.ssyn1))
+
+    model.syn0 += syn0 * alpha0
+    model.syn1 += syn1 * alpha1
+    */
+
+    const masterAlpha = max(min_alpha, update_alpha * (1.0 - 1.0 * latest.max_sentence_count / (latest.max_locale_sentences * numLocales)));
+
     {
       const dom = syn0Domain;
       onloczero[dom] = latest.syn0[dom];
       onloczero[dom] -= syn0[dom];
+      onloczero[dom] /= masterAlpha;
       ssyn0[dom] += onloczero[dom] ** 2;
-      const adaAlpha = update_alpha / (fudge_factor + sqrt(ssyn0));
+      const adaAlpha = masterAlpha / (fudge_factor + sqrt(ssyn0));
       syn0[dom] += onloczero[dom] * adaAlpha;
     }
     if (hs) then {
       const dom = syn1Domain;
       onloczero[dom] = latest.syn1[dom];
       onloczero[dom] -= syn1[dom];
+      onloczero[dom] /= masterAlpha;
       ssyn1[dom] += onloczero[dom] ** 2;
-      const adaAlpha = update_alpha / (fudge_factor + sqrt(ssyn1));
+      const adaAlpha = masterAlpha / (fudge_factor + sqrt(ssyn1));
       syn1[dom] += onloczero[dom] * adaAlpha;
     }
     if (negative) then {
       const dom = syn1negDomain;
       onloczero[dom] = latest.syn1neg[dom];
       onloczero[dom] -= syn1neg[dom];
+      onloczero[dom] /= masterAlpha;
       ssyn1neg[dom] += onloczero[dom] ** 2;
-      const adaAlpha = alpha / (fudge_factor + sqrt(ssyn1neg));
+      const adaAlpha = masterAlpha / (fudge_factor + sqrt(ssyn1neg));
       syn1neg[dom] += onloczero[dom] * adaAlpha;
     }
 
@@ -978,7 +998,11 @@ proc TrainModel() {
     /*stopVdebug();
     startVdebug("updating");*/
     info("updating");
-    for id in 0..(numLocales-1) do referenceNetwork.update(networkArr[id]);
+    if (use_adagrad) {
+      for id in 0..(numLocales-1) do referenceNetwork.updateAdaGrad(networkArr[id]);
+    } else {
+      for id in 0..(numLocales-1) do referenceNetwork.update(networkArr[id]);
+    }
     for loc in Locales do on loc do networkArr[here.id].copy(referenceNetwork);
     /*stopVdebug();*/
   }
