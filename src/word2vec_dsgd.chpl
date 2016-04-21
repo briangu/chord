@@ -34,7 +34,7 @@ config const min_alpha = 0.0001;
 config const sample = 1e-3;
 config const size = 100;
 config const debug_mode = 2;
-config const num_threads = here.maxTaskPar;
+config const num_threads = here.maxTaskPar - 1; // one for memory 
 /*config const master_step = 0.5;*/
 config const update_alpha = 256.0;
 
@@ -964,30 +964,22 @@ proc TrainModel() {
   }
 
   // run on a single locale using all threads available
-  /*startVdebug("network");*/
-  forall loc in Locales do on loc {
-    const id = here.id;
-    forall tid in 0..#num_threads {
-      var next_random: uint(64) = (id * tid): uint(64);
-      /*info("in loc ", tid);*/
-      for batch in 0..#iterations {
-        /*info("computing ",batch);*/
+  for batch in 0..#iterations {
+    info("computing ",batch);
+    startVdebug("network");
+    forall loc in Locales do on loc {
+      forall tid in 0..#num_threads {
+        /*info("in loc ", tid);*/
         networkArr[here.id].TrainModelThread(taskContexts[here.id][tid], batch_size/num_threads);
-        next_random = next_random * 25214903917:uint(64) + 11;
-        if (next_random % 3 == 0) then {
-          writeln("\nupdating ", here.id);
-          on Locales[0] do referenceNetwork.update(networkArr[id]);
-          networkArr[id].copy(referenceNetwork);
-        }
+        /*info("out loc ", tid);*/
       }
-      /*info("out loc ", tid);*/
     }
-    /*stopVdebug();*/
-    /*startVdebug("updating");*/
-    /*info("updating");
+    stopVdebug();
+    startVdebug("updating");
+    info("updating");
     for id in 0..(numLocales-1) do referenceNetwork.update(networkArr[id]);
-    for loc in Locales do on loc do networkArr[here.id].copy(referenceNetwork);*/
-    /*stopVdebug();*/
+    for loc in Locales do on loc do networkArr[here.id].copy(referenceNetwork);
+    stopVdebug();
   }
 
   for loc in Locales do on loc {
