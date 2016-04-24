@@ -620,7 +620,7 @@ class NetworkContext {
   const ZeroLocalesView = {0..#1, 1..1};
   const ZeroLocales: [ZeroLocalesView] locale = reshape(Locales[0..0], ZeroLocalesView);
 
-  var onloczeroDomain: domain(2) = syn0Domain dmapped Block(boundingBox=syn0Domain, targetLocales=ZeroLocales);
+  var onloczeroDomain: domain(2) = syn0Domain; // dmapped Block(boundingBox=syn0Domain, targetLocales=ZeroLocales);
   var onloczero: [onloczeroDomain] elemType;
 
   var locale_sentence_count: uint(64);
@@ -649,17 +649,14 @@ class NetworkContext {
   }
 
   proc initWith(network: NetworkContext) {
-    copy(network);
+    copy(network, network.syn0Domain);
     InitExpTable();
   }
 
-  proc copy(networkContext: NetworkContext) {
-    /*if (this.syn0Domain == networkContext.syn0Domain) then halt("syn0Domain not equal");
-    if (this.syn1Domain == networkContext.syn1Domain) then halt("syn0Domain not equal");
-    if (this.syn1negDomain == networkContext.syn1negDomain) then halt("syn0Domain not equal");*/
-    this.syn0[this.syn0Domain] = networkContext.syn0[this.syn0Domain];
-    if hs then this.syn1[this.syn1Domain] = networkContext.syn1[this.syn1Domain];
-    if negative then this.syn1neg[this.syn1negDomain] = networkContext.syn1neg[this.syn1negDomain];
+  proc copy(networkContext: NetworkContext, dom) {
+    this.syn0[dom] = networkContext.syn0[dom];
+    if hs then this.syn1[dom] = networkContext.syn1[dom];
+    if negative then this.syn1neg[dom] = networkContext.syn1neg[dom];
   }
 
   proc updateAdaGrad(latest: NetworkContext) {
@@ -719,30 +716,30 @@ class NetworkContext {
     info("stopping update", tid);
   }
 
-  proc update(latest: NetworkContext) {
+  proc update(latest: NetworkContext, dom) {
     const tid = latest.locale.id;
     const fudge_factor = 1e-6;
 
     info("starting update", tid);
-    if (here.id != 0) then halt("update should occur on locale 0");
+    /*if (here.id != 0) then halt("update should occur on locale 0");*/
 
     {
-      const dom = syn0Domain;
-      onloczero[dom] = latest.syn0[dom];
+      /*const dom = syn0Domain;*/
+      onloczero[syn0Domain] = latest.syn0[syn0Domain];
       onloczero[dom] -= syn0[dom];
       onloczero[dom] /= numLocales;
       syn0[dom] += onloczero[dom];
     }
     if (hs) then {
-      const dom = syn1Domain;
-      onloczero[dom] = latest.syn1[dom];
+      /*const dom = syn1Domain;*/
+      onloczero[syn1Domain] = latest.syn1[syn1Domain];
       onloczero[dom] -= syn1[dom];
       onloczero[dom] /= numLocales;
       syn1[dom] += onloczero[dom];
     }
     if (negative) then {
-      const dom = syn1negDomain;
-      onloczero[dom] = latest.syn1neg[dom];
+      /*const dom = syn1negDomain;*/
+      onloczero[syn1negDomain] = latest.syn1neg[syn1negDomain];
       onloczero[dom] -= syn1neg[dom];
       onloczero[dom] /= numLocales;
       syn1neg[dom] += onloczero[dom];
@@ -950,13 +947,14 @@ proc TrainModel() {
   if (output_file == "") then return;
   var network = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
   network.Init();
-  var referenceNetwork = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
-  referenceNetwork.initWith(network);
+  /*var referenceNetwork = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
+  referenceNetwork.initWith(network);*/
 
   startStats();
 
   var vocabArr: [PrivateSpace] VocabContext;
   var networkArr: [PrivateSpace] NetworkContext;
+  var referenceNetworkArr: [PrivateSpace] NetworkContext;
 
   // run on a single locale using all threads available
   coforall loc in Locales do on loc {
@@ -969,6 +967,8 @@ proc TrainModel() {
       networkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
       networkArr[here.id].initWith(network);
     }
+    referenceNetworkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
+    referenceNetworkArr[here.id].initWith(network);
   }
 
   ssyn0Domain = network.syn0Domain;
@@ -984,27 +984,32 @@ proc TrainModel() {
     }
   }
 
+  const domSliceSize:int = ((network.vocab_size*layer1_size):real / numLocales): int;
+
   // run on a single locale using all threads available
-  for batch in 0..#iterations {
-    info("computing ",batch);
-    /*startVdebug("network");*/
-    forall loc in Locales do on loc {
+  /*startVdebug("network");*/
+  coforall loc in Locales do on loc {
+    const workerId:int = here.id;
+    const subDomainStart = (workerId * domSliceSize):int;
+    const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart:int..#domSliceSize};
+    info(network.syn0Domain);
+    info(subSyn0Domain);
+
+    for batch in 0..#iterations {
+      info("computing ",batch);
       forall tid in 0..#num_threads {
-        /*info("in loc ", tid);*/
-        networkArr[here.id].TrainModelThread(taskContexts[here.id][tid], batch_size/num_threads);
-        /*info("out loc ", tid);*/
+        networkArr[workerId].TrainModelThread(taskContexts[workerId][tid], batch_size/num_threads);
       }
+      /*stopVdebug();
+      startVdebug("updating");*/
+      info("updating");
+      for id in 0..#numLocales do referenceNetworkArr[workerId].update(networkArr[id], subSyn0Domain);
+      for id in 0..#numLocales do networkArr[id].copy(referenceNetworkArr[workerId], subSyn0Domain);
+      /*writeln(referenceNetworkArr[workerId].syn0[0,0..#10]);
+      writeln(networkArr[workerId].syn0[0,0..#10]);
+      writeln(referenceNetworkArr[0].syn0 - networkArr[0].syn0);*/
+      /*stopVdebug();*/
     }
-    /*stopVdebug();
-    startVdebug("updating");*/
-    info("updating");
-    if (use_adagrad) {
-      for id in 0..(numLocales-1) do referenceNetwork.updateAdaGrad(networkArr[id]);
-    } else {
-      for id in 0..(numLocales-1) do referenceNetwork.update(networkArr[id]);
-    }
-    for loc in Locales do on loc do networkArr[here.id].copy(referenceNetwork);
-    /*stopVdebug();*/
   }
 
   for loc in Locales do on loc {
@@ -1012,6 +1017,22 @@ proc TrainModel() {
       taskContexts[here.id][tid].close();
     }
   }
+
+  info("collecting results");
+
+  if (numLocales > 1) {
+    for workerId in 1..(numLocales-1) {
+      const subDomainStart = (workerId * domSliceSize):int;
+      const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart:int..#domSliceSize};
+      referenceNetworkArr[0].copy(referenceNetworkArr[workerId], subSyn0Domain);
+    }
+  }
+
+  /*writeln(referenceNetworkArr[0].syn0[0,0..#10]);
+  writeln(networkArr[0].syn0[0,0..#10]);
+  writeln(referenceNetworkArr[0].syn0 - networkArr[0].syn0);*/
+
+  var referenceNetwork = referenceNetworkArr[0];
 
   info("writing results");
 
