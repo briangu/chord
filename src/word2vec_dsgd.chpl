@@ -38,6 +38,7 @@ config const num_threads = here.maxTaskPar;
 /*config const master_step = 0.5;*/
 config const update_alpha = 0.01;
 config const use_adagrad = false;
+config const num_param_locales = 1;
 
 const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
@@ -952,23 +953,39 @@ proc TrainModel() {
 
   startStats();
 
+  const computeLocalesStart = num_param_locales;
+  const numComputeLocales = Locales.size - num_param_locales;
+  const computeLocales = Locales[computeLocalesStart..#numComputeLocales];
+
+  writeln("computeLocalesStart ", computeLocalesStart);
+  writeln("numComputeLocales ", numComputeLocales);
+  writeln("computeLocales ", computeLocales);
+  /*writeln("num_param_locales ", num_param_locales);*/
+
   var vocabArr: [PrivateSpace] VocabContext;
   var networkArr: [PrivateSpace] NetworkContext;
   var referenceNetworkArr: [PrivateSpace] NetworkContext;
 
   // run on a single locale using all threads available
   coforall loc in Locales do on loc {
-    if here.id == 0 {
-      vocabArr[here.id] = vocabContext;
-      networkArr[here.id] = network;
+    if (here.id >= computeLocalesStart) {
+      info("creating worker");
+      if here.id == 0 {
+        vocabArr[here.id] = vocabContext;
+        networkArr[here.id] = network;
+      } else {
+        vocabArr[here.id] = new VocabContext();
+        vocabArr[here.id].loadFromFile(train_file.localize(), read_vocab_file.localize(), save_vocab_file.localize(), negative);
+        networkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
+        networkArr[here.id].initWith(network);
+      }
     } else {
+      info("creating reference");
       vocabArr[here.id] = new VocabContext();
       vocabArr[here.id].loadFromFile(train_file.localize(), read_vocab_file.localize(), save_vocab_file.localize(), negative);
-      networkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
-      networkArr[here.id].initWith(network);
+      referenceNetworkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
+      referenceNetworkArr[here.id].initWith(network);
     }
-    referenceNetworkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
-    referenceNetworkArr[here.id].initWith(network);
   }
 
   ssyn0Domain = network.syn0Domain;
@@ -977,18 +994,18 @@ proc TrainModel() {
 
   var taskContexts: [PrivateSpace] [0..#num_threads] ModelTaskContext;
 
-  for loc in Locales do on loc {
+  for loc in computeLocales do on loc {
     for tid in 0..#num_threads {
       taskContexts[here.id][tid] = new ModelTaskContext(train_file.localize(), here.id, tid);
       taskContexts[here.id][tid].init();
     }
   }
 
-  const domSliceSize:int = ((network.vocab_size*layer1_size):real / numLocales): int;
+  const domSliceSize:int = ((network.vocab_size*layer1_size):real / numComputeLocales): int;
 
   // run on a single locale using all threads available
   /*startVdebug("network");*/
-  coforall loc in Locales do on loc {
+  coforall loc in computeLocales do on loc {
     const workerId:int = here.id;
     const subDomainStart = (workerId * domSliceSize):int;
     const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart:int..#domSliceSize};
@@ -1003,8 +1020,8 @@ proc TrainModel() {
       /*stopVdebug();
       startVdebug("updating");*/
       info("updating");
-      for id in 0..#numLocales do referenceNetworkArr[workerId].update(networkArr[id], subSyn0Domain);
-      for id in 0..#numLocales do networkArr[id].copy(referenceNetworkArr[workerId], subSyn0Domain);
+      for id in computeLocalesStart..#numComputeLocales do referenceNetworkArr[id % num_param_locales].update(networkArr[id], subSyn0Domain);
+      for id in computeLocalesStart..#numComputeLocales do networkArr[id].copy(referenceNetworkArr[id % num_param_locales], subSyn0Domain);
       /*writeln(referenceNetworkArr[workerId].syn0[0,0..#10]);
       writeln(networkArr[workerId].syn0[0,0..#10]);
       writeln(referenceNetworkArr[0].syn0 - networkArr[0].syn0);*/
@@ -1020,12 +1037,10 @@ proc TrainModel() {
 
   info("collecting results");
 
-  if (numLocales > 1) {
-    for workerId in 1..(numLocales-1) {
-      const subDomainStart = (workerId * domSliceSize):int;
-      const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart:int..#domSliceSize};
-      referenceNetworkArr[0].copy(referenceNetworkArr[workerId], subSyn0Domain);
-    }
+  for workerId in computeLocalesStart..#numComputeLocales {
+    const subDomainStart = (workerId * domSliceSize):int;
+    const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart:int..#domSliceSize};
+    referenceNetworkArr[0].copy(referenceNetworkArr[workerId % num_param_locales], subSyn0Domain);
   }
 
   /*writeln(referenceNetworkArr[0].syn0[0,0..#10]);
