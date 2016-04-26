@@ -725,10 +725,10 @@ class NetworkContext {
   proc update(latest: NetworkContext, dom, id) {
     info("starting update ", id, " ", dom);
 
-    if (onloczeroDomain.low > dom.low) then halt("onloczeroDomain.low > dom.low");
-    if (onloczeroDomain.high < dom.high) then halt("onloczeroDomain.high < dom.high");
-    if (syn0Domain.low > dom.low) then halt("syn0Domain.low > dom.low");
-    if (syn0Domain.high < dom.high) then halt("syn0Domain.high < dom.high");
+    if (onloczeroDomain.low > dom.low) then halt("onloczeroDomain.low > dom.low", onloczeroDomain);
+    if (onloczeroDomain.high < dom.high) then halt("onloczeroDomain.high < dom.high ", onloczeroDomain);
+    if (syn0Domain.low > dom.low) then halt("syn0Domain.low > dom.low ", syn0Domain);
+    if (syn0Domain.high < dom.high) then halt("syn0Domain.high < dom.high ", syn0Domain);
 
     {
       onloczero[dom] = latest.syn0[dom];
