@@ -660,9 +660,18 @@ class NetworkContext {
   }
 
   proc copy(networkContext: NetworkContext, dom) {
-    this.syn0[dom] = networkContext.syn0[dom];
-    if hs then this.syn1[dom] = networkContext.syn1[dom];
-    if negative then this.syn1neg[dom] = networkContext.syn1neg[dom];
+    onloczero[syn0Domain] = networkContext.syn0[syn0Domain];
+    this.syn0[dom] = onloczero[dom];
+
+    if hs {
+      onloczero[syn1Domain] = networkContext.syn1[syn1Domain];
+      this.syn1[dom] = onloczero[dom];
+    }
+
+    if negative {
+      onloczero[syn1negDomain] = networkContext.syn1neg[syn1negDomain];
+      this.syn1neg[dom] = onloczero[dom];
+    }
   }
 
   proc updateAdaGrad(latest: NetworkContext) {
@@ -731,19 +740,19 @@ class NetworkContext {
     if (syn0Domain.high < dom.high) then halt("syn0Domain.high < dom.high ", syn0Domain);
 
     {
-      onloczero[dom] = latest.syn0[dom];
+      onloczero[syn0Domain] = latest.syn0[syn0Domain];
       onloczero[dom] -= syn0[dom];
       onloczero[dom] /= numComputeLocales;
       syn0[dom] += onloczero[dom];
     }
     if (hs) then {
-      onloczero[dom] = latest.syn1[dom];
+      onloczero[syn1Domain] = latest.syn1[syn1Domain];
       onloczero[dom] -= syn1[dom];
       onloczero[dom] /= numComputeLocales;
       syn1[dom] += onloczero[dom];
     }
     if (negative) then {
-      onloczero[dom] = latest.syn1neg[dom];
+      onloczero[syn1negDomain] = latest.syn1neg[syn1negDomain];
       onloczero[dom] -= syn1neg[dom];
       onloczero[dom] /= numComputeLocales;
       syn1neg[dom] += onloczero[dom];
