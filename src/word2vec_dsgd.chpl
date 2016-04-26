@@ -741,20 +741,20 @@ class NetworkContext {
 
     {
       onloczero[syn0Domain] = latest.syn0[syn0Domain];
-      onloczero[dom] -= syn0[dom];
-      onloczero[dom] /= numComputeLocales;
+      onloczero[syn0Domain] -= syn0[syn0Domain];
+      onloczero[syn0Domain] /= numComputeLocales;
       syn0[dom] += onloczero[dom];
     }
     if (hs) then {
       onloczero[syn1Domain] = latest.syn1[syn1Domain];
-      onloczero[dom] -= syn1[dom];
-      onloczero[dom] /= numComputeLocales;
+      onloczero[syn1Domain] -= syn1[syn1Domain];
+      onloczero[syn1Domain] /= numComputeLocales;
       syn1[dom] += onloczero[dom];
     }
     if (negative) then {
       onloczero[syn1negDomain] = latest.syn1neg[syn1negDomain];
-      onloczero[dom] -= syn1neg[dom];
-      onloczero[dom] /= numComputeLocales;
+      onloczero[syn1negDomain] -= syn1neg[syn1negDomain];
+      onloczero[syn1negDomain] /= numComputeLocales;
       syn1neg[dom] += onloczero[dom];
     }
 
