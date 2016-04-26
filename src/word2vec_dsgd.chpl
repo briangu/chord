@@ -1001,7 +1001,7 @@ proc TrainModel() {
   /*startVdebug("network");*/
   coforall loc in computeLocales do on loc {
     const workerId:int = here.id;
-    const subDomainStart = ((workerId - computeLocales[0].id) * domSliceSize):int;
+    const subDomainStart = ((workerId - computeLocalesStart) * domSliceSize):int;
     const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart:int..#domSliceSize};
     info(network.syn0Domain);
     info(subSyn0Domain);
