@@ -1021,7 +1021,7 @@ proc TrainModel() {
       info("updating");
       for id in computeLocalesStart..#numComputeLocales {
         for rid in 0..#num_param_locales {
-          const subDomainStart = ((workerId - computeLocalesStart) * domSliceSize):int;
+          const subDomainStart = (rid * domSliceSize):int;
           const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart:int..#domSliceSize};
           info(subSyn0Domain);
           on referenceNetworkArr[rid] do referenceNetworkArr[rid].update(networkArr[id], subSyn0Domain, id);
@@ -1030,7 +1030,7 @@ proc TrainModel() {
       info("copying");
       for id in computeLocalesStart..#numComputeLocales {
         for rid in 0..#num_param_locales {
-          const subDomainStart = ((workerId - computeLocalesStart) * domSliceSize):int;
+          const subDomainStart = (rid * domSliceSize):int;
           const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart:int..#domSliceSize};
           on networkArr[id] do networkArr[id].copy(referenceNetworkArr[id % num_param_locales], subSyn0Domain);
         }
