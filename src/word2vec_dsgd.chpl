@@ -722,36 +722,34 @@ class NetworkContext {
     info("stopping update", tid);
   }
 
-  proc update(latest: NetworkContext, dom) {
-    const tid = latest.locale.id;
-    const fudge_factor = 1e-6;
+  proc update(latest: NetworkContext, dom, id) {
+    info("starting update ", id, " ", dom);
 
-    info("starting update", tid);
-    /*if (here.id != 0) then halt("update should occur on locale 0");*/
+    if (onloczeroDomain.low > dom.low) then halt("onloczeroDomain.low > dom.low");
+    if (onloczeroDomain.high < dom.high) then halt("onloczeroDomain.high < dom.high");
+    if (syn0Domain.low > dom.low) then halt("syn0Domain.low > dom.low");
+    if (syn0Domain.high < dom.high) then halt("syn0Domain.high < dom.high");
 
     {
-      /*const dom = syn0Domain;*/
       onloczero[dom] = latest.syn0[dom];
       onloczero[dom] -= syn0[dom];
       onloczero[dom] /= numComputeLocales;
       syn0[dom] += onloczero[dom];
     }
     if (hs) then {
-      /*const dom = syn1Domain;*/
       onloczero[dom] = latest.syn1[dom];
       onloczero[dom] -= syn1[dom];
       onloczero[dom] /= numComputeLocales;
       syn1[dom] += onloczero[dom];
     }
     if (negative) then {
-      /*const dom = syn1negDomain;*/
       onloczero[dom] = latest.syn1neg[dom];
       onloczero[dom] -= syn1neg[dom];
       onloczero[dom] /= numComputeLocales;
       syn1neg[dom] += onloczero[dom];
     }
 
-    info("stopping update", tid);
+    info("stopping update ", id, " ", dom);
   }
 
   proc TrainModelThread(mt: ModelTaskContext, batch_size: int) {
@@ -1016,7 +1014,7 @@ proc TrainModel() {
       /*stopVdebug();
       startVdebug("updating");*/
       info("updating");
-      for id in computeLocalesStart..#numComputeLocales do referenceNetworkArr[id % num_param_locales].update(networkArr[id], subSyn0Domain);
+      for id in computeLocalesStart..#numComputeLocales do referenceNetworkArr[id % num_param_locales].update(networkArr[id], subSyn0Domain, id);
       for id in computeLocalesStart..#numComputeLocales do networkArr[id].copy(referenceNetworkArr[id % num_param_locales], subSyn0Domain);
       /*writeln(referenceNetworkArr[workerId].syn0[0,0..#10]);
       writeln(networkArr[workerId].syn0[0,0..#10]);
