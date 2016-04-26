@@ -78,6 +78,14 @@ writeln("numLocales = ", numLocales);
 writeln("batch_size = ", batch_size);
 writeln("iterations = ", iterations);
 
+const computeLocalesStart = num_param_locales;
+const numComputeLocales = Locales.size - num_param_locales;
+const computeLocales = Locales[computeLocalesStart..#numComputeLocales];
+
+writeln("computeLocalesStart ", computeLocalesStart);
+writeln("numComputeLocales ", numComputeLocales);
+writeln("computeLocales ", computeLocales);
+writeln("num_param_locales ", num_param_locales);
 
 /*proc sumWordCountActual(): int {
   var sum: int;
@@ -949,15 +957,6 @@ proc TrainModel() {
   referenceNetwork.initWith(network);*/
 
   startStats();
-
-  const computeLocalesStart = num_param_locales;
-  const numComputeLocales = Locales.size - num_param_locales;
-  const computeLocales = Locales[computeLocalesStart..#numComputeLocales];
-
-  writeln("computeLocalesStart ", computeLocalesStart);
-  writeln("numComputeLocales ", numComputeLocales);
-  writeln("computeLocales ", computeLocales);
-  /*writeln("num_param_locales ", num_param_locales);*/
 
   var vocabArr: [PrivateSpace] VocabContext;
   var networkArr: [PrivateSpace] NetworkContext;
