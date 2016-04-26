@@ -605,14 +605,11 @@ class NetworkContext {
   const train_words = vocabContext.train_words;
 
   const syn0Domain = {0..#1,0..#(vocab_size*layer1_size)};
-  const syn0DomainSpace = syn0Domain; // dmapped Block(boundingBox=syn0Domain, targetLocales=MyLocales);
-  var syn0: [syn0DomainSpace] elemType;
+  var syn0: [syn0Domain] elemType;
   const syn1Domain = if (hs) then syn0Domain else {0..#1,0..#1};
-  const syn1DomainSpace = syn1Domain; // dmapped Block(boundingBox=syn1Domain, targetLocales=MyLocales);
-  var syn1: [syn1DomainSpace] elemType;
+  var syn1: [syn1Domain] elemType;
   const syn1negDomain = if (negative) then syn0Domain else {0..#1,0..#1};
-  const syn1negDomainSpace = syn1negDomain; // dmapped Block(boundingBox=syn1negDomain, targetLocales=MyLocales);
-  var syn1neg: [syn1negDomainSpace] elemType;
+  var syn1neg: [syn1negDomain] elemType;
 
   var expTable: [0..#(EXP_TABLE_SIZE+1)] real;
 
@@ -726,23 +723,23 @@ class NetworkContext {
 
     {
       /*const dom = syn0Domain;*/
-      onloczero[syn0Domain] = latest.syn0[syn0Domain];
+      onloczero[dom] = latest.syn0[dom];
       onloczero[dom] -= syn0[dom];
-      onloczero[dom] /= numLocales;
+      onloczero[dom] /= numComputeLocales;
       syn0[dom] += onloczero[dom];
     }
     if (hs) then {
       /*const dom = syn1Domain;*/
-      onloczero[syn1Domain] = latest.syn1[syn1Domain];
+      onloczero[dom] = latest.syn1[dom];
       onloczero[dom] -= syn1[dom];
-      onloczero[dom] /= numLocales;
+      onloczero[dom] /= numComputeLocales;
       syn1[dom] += onloczero[dom];
     }
     if (negative) then {
       /*const dom = syn1negDomain;*/
-      onloczero[syn1negDomain] = latest.syn1neg[syn1negDomain];
+      onloczero[dom] = latest.syn1neg[dom];
       onloczero[dom] -= syn1neg[dom];
-      onloczero[dom] /= numLocales;
+      onloczero[dom] /= numComputeLocales;
       syn1neg[dom] += onloczero[dom];
     }
 
