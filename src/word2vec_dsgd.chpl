@@ -80,7 +80,7 @@ writeln("iterations = ", iterations);
 
 const computeLocalesStart = num_param_locales;
 const numComputeLocales = Locales.size - num_param_locales;
-const computeLocales = Locales[computeLocalesStart..#numComputeLocales];
+const computeLocales = Locales[computeLocalesStart..];
 
 writeln("computeLocalesStart ", computeLocalesStart);
 writeln("numComputeLocales ", numComputeLocales);
@@ -1023,9 +1023,9 @@ proc TrainModel() {
       /*stopVdebug();
       startVdebug("updating");*/
       info("updating");
-      for id in computeLocalesStart..#numComputeLocales do referenceNetworkArr[id % num_param_locales].update(networkArr[id], subSyn0Domain, id);
+      for id in computeLocalesStart..#numComputeLocales do on referenceNetworkArr[id % num_param_locales] do referenceNetworkArr[id % num_param_locales].update(networkArr[id], subSyn0Domain, id);
       info("copying");
-      for id in computeLocalesStart..#numComputeLocales do networkArr[id].copy(referenceNetworkArr[id % num_param_locales], subSyn0Domain);
+      for id in computeLocalesStart..#numComputeLocales do on networkArr[id] do networkArr[id].copy(referenceNetworkArr[id % num_param_locales], subSyn0Domain);
       /*writeln(referenceNetworkArr[workerId].syn0[0,0..#10]);
       writeln(networkArr[workerId].syn0[0,0..#10]);
       writeln(referenceNetworkArr[0].syn0 - networkArr[0].syn0);*/
@@ -1033,7 +1033,7 @@ proc TrainModel() {
     }
   }
 
-  for loc in Locales do on loc {
+  for loc in Locales[computeLocalesStart..] do on loc {
     for tid in 0..#num_threads {
       taskContexts[here.id][tid].close();
     }
@@ -1042,7 +1042,7 @@ proc TrainModel() {
   info("collecting results");
 
   for workerId in computeLocalesStart..#numComputeLocales {
-    const subDomainStart = (workerId * domSliceSize):int;
+    const subDomainStart = ((workerId - computeLocalesStart) * domSliceSize):int;
     const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart:int..#domSliceSize};
     referenceNetworkArr[0].copy(referenceNetworkArr[workerId % num_param_locales], subSyn0Domain);
   }
