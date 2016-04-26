@@ -1024,6 +1024,7 @@ proc TrainModel() {
       startVdebug("updating");*/
       info("updating");
       for id in computeLocalesStart..#numComputeLocales do referenceNetworkArr[id % num_param_locales].update(networkArr[id], subSyn0Domain, id);
+      info("copying");
       for id in computeLocalesStart..#numComputeLocales do networkArr[id].copy(referenceNetworkArr[id % num_param_locales], subSyn0Domain);
       /*writeln(referenceNetworkArr[workerId].syn0[0,0..#10]);
       writeln(networkArr[workerId].syn0[0,0..#10]);
