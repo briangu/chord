@@ -39,6 +39,7 @@ config const num_threads = here.maxTaskPar;
 config const update_alpha = 0.01;
 config const use_adagrad = false;
 config const num_param_locales = 1;
+config const save_interval = 0;
 
 const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
@@ -732,7 +733,7 @@ class NetworkContext {
   }
 
   proc update(latest: NetworkContext, dom, id) {
-    info("starting update ", id, " ", dom);
+    /*info("starting update ", id, " ", dom);*/
 
     if (onloczeroDomain.low > dom.low) then halt("onloczeroDomain.low > dom.low", onloczeroDomain);
     if (onloczeroDomain.high < dom.high) then halt("onloczeroDomain.high < dom.high ", onloczeroDomain);
@@ -758,7 +759,7 @@ class NetworkContext {
       syn1neg[dom] += onloczero[dom];
     }
 
-    info("stopping update ", id, " ", dom);
+    /*info("stopping update ", id, " ", dom);*/
   }
 
   proc TrainModelThread(mt: ModelTaskContext, batch_size: int) {
@@ -950,6 +951,90 @@ class NetworkContext {
   }
 }
 
+proc writeResults(output_file: string, network: NetworkContext) {
+  const vocabContext = network.vocabContext;
+  const layer1_size = network.layer1_size;
+  const LayerSpace = {0..#layer1_size};
+
+  var outputFile = open(output_file, iomode.cw);
+  var writer = outputFile.writer(locking=false);
+
+  writer.writeln(vocabContext.vocab_size, " ", layer1_size);
+  for a in 0..#vocabContext.vocab_size {
+    for j in 0..#vocabContext.vocab[a].len {
+      writer.writef("%c", vocabContext.vocab[a].word[j]);
+    }
+    writer.write(" ");
+    if (binary) then for b in LayerSpace do writer.writef("%|4r", network.syn0[0,a * layer1_size + b]);
+    else for b in LayerSpace do writer.write(network.syn0[0,a * layer1_size + b], " ");
+    writer.writeln();
+  }
+
+  writer.close();
+  outputFile.close();
+}
+
+// Run K-means on the word vectors
+proc runKMeans(output_file: string, network: NetworkContext, classes: int) {
+  const vocabContext = network.vocabContext;
+  const layer1_size = network.layer1_size;
+  const LayerSpace = {0..#layer1_size};
+
+  var clcn = classes;
+  var iterX = 10;
+  var closeid: int;
+  var centcn: [0..#classes] int;
+  var cl: [0..#vocabContext.vocab_size] int;
+  var closev, x: real;
+  var cent: [0..#classes*layer1_size] real;
+
+  var outputFile = open(output_file, iomode.cw);
+  var writer = outputFile.writer(locking=false);
+
+  for a in 0..#vocabContext.vocab_size do cl[a] = a % clcn;
+  for a in 0..iterX {
+    for b in 0..#(clcn * layer1_size) do cent[b] = 0;
+    for b in 0..#clcn do centcn[b] = 1;
+    for c in 0..#vocabContext.vocab_size {
+      for d in LayerSpace do cent[layer1_size * cl[c] + d] += network.syn0[0,c * layer1_size + d];
+      centcn[cl[c]] += 1;
+    }
+    for b in 0..#clcn {
+      closev = 0;
+      for c in LayerSpace {
+        cent[layer1_size * b + c] /= centcn[b];
+        closev += cent[layer1_size * b + c] * cent[layer1_size * b + c];
+      }
+      closev = sqrt(closev);
+      for c in LayerSpace do cent[layer1_size * b + c] /= closev;
+    }
+    for c in 0..#vocabContext.vocab_size {
+      closev = -10;
+      closeid = 0;
+      for d in 0..#clcn {
+        x = 0;
+        for b in LayerSpace do x += cent[layer1_size * d + b] * network.syn0[0,c * layer1_size + b];
+        if (x > closev) {
+          closev = x;
+          closeid = d;
+        }
+      }
+      cl[c] = closeid;
+    }
+  }
+  // Save the K-means classes
+  for a in 0..#vocabContext.vocab_size {
+    for j in 0..#vocabContext.vocab[a].len do writer.writef("%c", vocabContext.vocab[a].word[j]);
+    writer.write(" ");
+    if (binary) then writer.writef("%|4i", cl[a]);
+    else writer.write(cl[a]);
+    writer.writeln();
+  }
+
+  writer.close();
+  outputFile.close();
+}
+
 proc TrainModel() {
   var a, b, c, d: int;
   var t: Timer;
@@ -991,6 +1076,8 @@ proc TrainModel() {
     }
   }
 
+  const referenceNetwork = referenceNetworkArr[0];
+
   ssyn0Domain = network.syn0Domain;
   ssyn1Domain = network.syn1Domain;
   ssyn1degDomain = network.syn1negDomain;
@@ -1012,30 +1099,39 @@ proc TrainModel() {
     const workerId:int = here.id;
 
     for batch in 0..#iterations {
-      info("computing ",batch);
+      info("training ",batch);
+      /*startVdebug("training");*/
       forall tid in 0..#num_threads {
         networkArr[workerId].TrainModelThread(taskContexts[workerId][tid], batch_size/num_threads);
       }
       /*stopVdebug();
       startVdebug("updating");*/
-      info("updating");
+      /*info("updating");*/
       for rid in 0..#num_param_locales {
         const subDomainStart = (rid * domSliceSize):int;
         const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart:int..#domSliceSize};
-        info(subSyn0Domain);
+        /*info(subSyn0Domain);*/
         on referenceNetworkArr[rid] do referenceNetworkArr[rid].update(networkArr[workerId], subSyn0Domain, workerId);
       }
 
-      info("copying");
+      /*info("copying");*/
       for rid in 0..#num_param_locales {
         const subDomainStart = (rid * domSliceSize):int;
         const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart:int..#domSliceSize};
         on networkArr[workerId] do networkArr[workerId].copy(referenceNetworkArr[rid], subSyn0Domain);
       }
-      /*writeln(referenceNetworkArr[workerId].syn0[0,0..#10]);
-      writeln(networkArr[workerId].syn0[0,0..#10]);
-      writeln(referenceNetworkArr[0].syn0 - networkArr[0].syn0);*/
       /*stopVdebug();*/
+
+      if ((workerId == computeLocalesStart) && (save_interval > 0) && (batch % save_interval == 0)) then on referenceNetwork {
+        info("collecting intermediate results");
+        for rid in 1..#(num_param_locales-1) {
+          const subDomainStart = (rid * domSliceSize):int;
+          const subSyn0Domain = {referenceNetwork.syn0Domain.dim(1), subDomainStart:int..#domSliceSize};
+          referenceNetwork.copy(referenceNetworkArr[rid], subSyn0Domain);
+        }
+        info("saving intermediate results");
+        writeResults(output_file, referenceNetwork);
+      }
     }
   }
 
@@ -1053,82 +1149,13 @@ proc TrainModel() {
     referenceNetworkArr[0].copy(referenceNetworkArr[rid], subSyn0Domain);
   }
 
-  /*writeln(referenceNetworkArr[0].syn0[0,0..#10]);
-  writeln(networkArr[0].syn0[0,0..#10]);
-  writeln(referenceNetworkArr[0].syn0 - networkArr[0].syn0);*/
-
-  var referenceNetwork = referenceNetworkArr[0];
-
   info("writing results");
 
-  const LayerSpace = {0..#layer1_size};
-
-  var outputFile = open(output_file, iomode.cw);
-  var writer = outputFile.writer(locking=false);
   if (classes == 0) {
-    // Save the word vectors
-    writer.writeln(vocabContext.vocab_size, " ", layer1_size);
-    for a in 0..#vocabContext.vocab_size {
-      for j in 0..#vocabContext.vocab[a].len {
-        writer.writef("%c", vocabContext.vocab[a].word[j]);
-      }
-      writer.write(" ");
-      if (binary) then for b in LayerSpace do writer.writef("%|4r", referenceNetwork.syn0[0,a * layer1_size + b]);
-      else for b in LayerSpace do writer.write(referenceNetwork.syn0[0,a * layer1_size + b], " ");
-      writer.writeln();
-    }
+    writeResults(output_file, referenceNetwork);
   } else {
-    // Run K-means on the word vectors
-    var clcn = classes;
-    var iterX = 10;
-    var closeid: int;
-    var centcn: [0..#classes] int;
-    var cl: [0..#vocabContext.vocab_size] int;
-    var closev, x: real;
-    var cent: [0..#classes*layer1_size] real;
-
-    for a in 0..#vocabContext.vocab_size do cl[a] = a % clcn;
-    for a in 0..iterX {
-      for b in 0..#(clcn * layer1_size) do cent[b] = 0;
-      for b in 0..#clcn do centcn[b] = 1;
-      for c in 0..#vocabContext.vocab_size {
-        for d in LayerSpace do cent[layer1_size * cl[c] + d] += referenceNetwork.syn0[0,c * layer1_size + d];
-        centcn[cl[c]] += 1;
-      }
-      for b in 0..#clcn {
-        closev = 0;
-        for c in LayerSpace {
-          cent[layer1_size * b + c] /= centcn[b];
-          closev += cent[layer1_size * b + c] * cent[layer1_size * b + c];
-        }
-        closev = sqrt(closev);
-        for c in LayerSpace do cent[layer1_size * b + c] /= closev;
-      }
-      for c in 0..#vocabContext.vocab_size {
-        closev = -10;
-        closeid = 0;
-        for d in 0..#clcn {
-          x = 0;
-          for b in LayerSpace do x += cent[layer1_size * d + b] * network.syn0[0,c * layer1_size + b];
-          if (x > closev) {
-            closev = x;
-            closeid = d;
-          }
-        }
-        cl[c] = closeid;
-      }
-    }
-    // Save the K-means classes
-    for a in 0..#vocabContext.vocab_size {
-      for j in 0..#vocabContext.vocab[a].len do writer.writef("%c", vocabContext.vocab[a].word[j]);
-      writer.write(" ");
-      if (binary) then writer.writef("%|4i", cl[a]);
-      else writer.write(cl[a]);
-      writer.writeln();
-    }
+    runKMeans(output_file, referenceNetwork, classes);
   }
-  writer.close();
-  outputFile.close();
 }
 
 proc main() {
