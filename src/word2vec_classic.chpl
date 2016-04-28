@@ -124,7 +124,6 @@ proc ReadWord(word: [?] uint(8), reader): int {
     a += 1;
     if (a >= MAX_STRING - 1) then a -= 1; // Truncate too long words
   }
-  word[a] = 0;
   return a;
 }
 
