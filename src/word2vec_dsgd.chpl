@@ -12,7 +12,8 @@ const MAX_EXP = 6;
 const MAX_SENTENCE_LENGTH = 1000;
 const MAX_CODE_LENGTH = 40;
 
-const vocab_hash_size = 30000000;  // Maximum 30 * 0.7 = 21M words in the vocabulary
+const vocab_hash_size = 1024 * 1024 * 32;  // Maximum 30 * 0.7 = 21M words in the vocabulary
+const vocab_hash_size_mask = (2 ** 25) - 1;
 
 // Command line arguments
 config var vocab_max_size = 1000;
@@ -215,10 +216,14 @@ class VocabContext {
   }
 
   inline proc GetWordHash(word: [?] uint(8), len: int): int {
-    var hash: uint = 0;
+    if (len == 1) {
+      return word[0]: int;
+    } else if (len == 2) {
+      return (word[0] * 257 + word[1]): int;
+    }
+    var hash: uint;
     for ch in 0..#len do hash = hash * 257 + word[ch]: uint;
-    hash = hash % vocab_hash_size: uint;
-    return hash: int;
+    return (hash & vocab_hash_size_mask): int;
   }
 
   // Returns position of a word in the vocabulary; if the word is not found, returns -1
@@ -238,7 +243,7 @@ class VocabContext {
         }
         if found then return vocab_hash[hash];
       }
-      hash = (hash + 1) % vocab_hash_size;
+      hash = (hash + 1) & vocab_hash_size_mask;
     }
 
     return -1;
@@ -267,7 +272,7 @@ class VocabContext {
     }
     var hash = GetWordHash(word, len);
     while (vocab_hash[hash] != -1) {
-      hash = (hash + 1) % vocab_hash_size;
+      hash = (hash + 1) & vocab_hash_size_mask;
     }
     vocab_hash[hash] = vocab_size - 1;
     return vocab_size - 1;
@@ -360,7 +365,7 @@ class VocabContext {
       } else {
         // Hash will be re-computed, as after the sorting it is not actual
         hash = GetWordHash(vocab[a].word, vocab[a].len);
-        while (vocab_hash[hash] != -1) do hash = (hash + 1) % vocab_hash_size;
+        while (vocab_hash[hash] != -1) do hash = (hash + 1) & vocab_hash_size_mask;
         vocab_hash[hash] = a;
         train_words += vocab[a].cn;
       }
@@ -385,7 +390,7 @@ class VocabContext {
     for a in 0..#vocab_size {
       // Hash will be re-computed, as it is not actual
       var hash = GetWordHash(vocab[a].word, vocab[a].len);
-      while (vocab_hash[hash] != -1) do hash = (hash + 1) % vocab_hash_size;
+      while (vocab_hash[hash] != -1) do hash = (hash + 1) & vocab_hash_size_mask;
       vocab_hash[hash] = a;
     }
     min_reduce += 1;
@@ -1129,7 +1134,7 @@ proc TrainModel() {
           referenceNetwork.copy(referenceNetworkArr[rid], subSyn0Domain);
         }
         info("saving intermediate results");
-        writeResults(output_file, referenceNetwork);
+        writeResults(output_file.localize() + "." + batch, referenceNetwork);
       }
     }
   }
