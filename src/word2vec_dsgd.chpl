@@ -25,7 +25,7 @@ config const output_file: string = "";
 config const hs = 0;
 config const negative = 5;
 config const iterations = 100000;
-config const batch_size = 500;
+config const batch_size = 0;
 config const window = 5;
 config const cbow = 1;
 config const binary = 0;
@@ -48,15 +48,6 @@ const CRLF = ascii('\n'): uint(8);
 
 const layer1_size = size;
 
-const max_locale_sentences = ((iterations * batch_size) / numLocales:real);
-
-const MyLocaleView = {0..#numLocales, 1..1};
-const MyLocales: [MyLocaleView] locale = reshape(Locales, MyLocaleView);
-
-var word_count_actual_domain = {0..#numLocales, 0..#num_threads};
-var word_count_actual_domain_space = word_count_actual_domain dmapped Block(boundingBox=word_count_actual_domain, targetLocales=MyLocales);
-var word_count_actual: [word_count_actual_domain_space] int;
-
 var ssyn0Domain: domain(2);
 var ssyn0: [ssyn0Domain] real;
 var ssyn1Domain: domain(2);
@@ -64,17 +55,6 @@ var ssyn1: [ssyn1Domain] real;
 var ssyn1degDomain: domain(2);
 var ssyn1neg: [ssyn1degDomain] real;
 
-var statsTimer: Timer;
-var statsTimerStart: real(64);
-var lastTimerValue: real(64);
-
-proc startStats() {
-  statsTimer.start();
-  statsTimerStart = statsTimer.elapsed(TimeUnits.microseconds);
-  lastTimerValue = statsTimerStart;
-}
-
-writeln("max_locale_sentences = ", max_locale_sentences);
 writeln("num_threads = ", num_threads);
 writeln("numLocales = ", numLocales);
 writeln("batch_size = ", batch_size);
@@ -89,28 +69,14 @@ writeln("numComputeLocales ", numComputeLocales);
 writeln("computeLocales ", computeLocales);
 writeln("num_param_locales ", num_param_locales);
 
-/*proc sumWordCountActual(): int {
-  var sum: int;
-  for i in 0..#numLocales {
-    for j in 0..#num_threads {
-      sum += word_count_actual[i,j];
-    }
-  }
-  return sum;
-}*/
-
-proc reportStats(locale_sentence_count, alpha) {
+proc reportStats(statsTimer, locale_word_count, max_locale_words, alpha) {
   var now = statsTimer.elapsed(TimeUnits.milliseconds);
-  if ((now - lastTimerValue) > 1000) {
-    lastTimerValue = now;
-    writef("\rAlpha: %r  Progress: %0.2r%%  Words/sec: %rk  Words/thread/sec: %rk  %r",
-          alpha,
-          (locale_sentence_count / (max_locale_sentences:real * numLocales)) * 100,
-          (locale_sentence_count * numLocales) / ((now + 1) / 1000) / 1000,
-          (locale_sentence_count / num_threads) / ((now + 1) / 1000) / 1000,
-          locale_sentence_count);
-    stdout.flush();
-  }
+  writef("\rAlpha: %r  Progress: %0.2r%%  Words/sec: %rk  Words/thread/sec: %rk",
+        alpha,
+        (locale_word_count / (max_locale_words:real * numComputeLocales)) * 100,
+        (locale_word_count * numComputeLocales:real) / ((now + 1) / 1000) / 1000,
+        (locale_word_count / num_threads:real) / ((now + 1) / 1000) / 1000);
+  stdout.flush();
 }
 
 record VocabEntry {
@@ -584,11 +550,12 @@ class ModelTaskContext {
   var word_count: uint(64);
   var last_word_count: uint(64);
   var trainFile = open(trainFileName, iomode.r);
-  const fileChunkSize = trainFile.length() / numLocales;
+  const fileChunkSize = trainFile.length() / numComputeLocales;
   const taskFileChunkSize = fileChunkSize / num_threads;
-  const seekStart = fileChunkSize * id + taskFileChunkSize * tid;
+  const seekStart = fileChunkSize * (id - computeLocalesStart) + taskFileChunkSize * tid;
   const seekStop = seekStart + taskFileChunkSize;
   var reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop, locking=false);
+  var statsTimer: Timer;
 
   proc init() {
     reader.lock();
@@ -609,6 +576,19 @@ class ModelTaskContext {
   proc isDone(): bool {
     return current_iteration > total_iterations;
   }
+
+  proc startStats() {
+    statsTimer.clear();
+    statsTimer.start();
+  }
+
+  proc pauseStats() {
+    statsTimer.stop();
+  }
+
+  proc resumeStats() {
+    statsTimer.start();
+  }
 }
 
 class NetworkContext {
@@ -622,6 +602,7 @@ class NetworkContext {
 
   const vocab_size = vocabContext.vocab_size;
   const train_words = vocabContext.train_words;
+  const max_locale_words = (train_words * iterations) / numComputeLocales;
 
   const syn0Domain = {0..#1,0..#(vocab_size*layer1_size)};
   var syn0: [syn0Domain] elemType;
@@ -639,9 +620,6 @@ class NetworkContext {
 
   var onloczeroDomain: domain(2) = syn0Domain; // dmapped Block(boundingBox=syn0Domain, targetLocales=ZeroLocales);
   var onloczero: [onloczeroDomain] elemType;
-
-  var locale_sentence_count: uint(64);
-  var total_word_count: uint(64);
 
   proc InitExpTable() {
     for i in 0..#EXP_TABLE_SIZE {
@@ -685,31 +663,14 @@ class NetworkContext {
     }
   }
 
-  proc updateAdaGrad(latest: NetworkContext) {
+  /*proc updateAdaGrad(latest: NetworkContext) {
     const tid = latest.locale.id;
     const fudge_factor = 1e-6;
 
     info("starting update", tid);
     if (here.id != 0) then halt("update should occur on locale 0");
 
-    // based on https://github.com/dirkneumann/deepdist/blob/master/examples/word2vec_adagrad.py
-    /*
-    alpha = max(model.min_alpha, model.alpha * (1.0 - 1.0 * model.word_count / model.total_words))
-
-    syn0 = update['syn0'] / alpha
-    syn1 = update['syn1'] / alpha
-
-    model.ssyn0 += syn0 * syn0
-    model.ssyn1 += syn1 * syn1
-
-    alpha0 = alpha / (1e-6 + np.sqrt(model.ssyn0))
-    alpha1 = alpha / (1e-6 + np.sqrt(model.ssyn1))
-
-    model.syn0 += syn0 * alpha0
-    model.syn1 += syn1 * alpha1
-    */
-
-    const masterAlpha = max(min_alpha, update_alpha * (1.0 - 1.0 * latest.locale_sentence_count / (max_locale_sentences * numLocales)));
+    const masterAlpha = max(min_alpha, update_alpha * (1.0 - 1.0 * latest.locale_sentence_count / (max_locale_words * numLocales)));
 
     {
       const dom = syn0Domain;
@@ -740,7 +701,7 @@ class NetworkContext {
     }
 
     info("stopping update", tid);
-  }
+  }*/
 
   proc update(latest: NetworkContext, dom, id) {
     /*info("starting update ", id, " ", dom);*/
@@ -776,7 +737,6 @@ class NetworkContext {
     var a, b, d, cw, word, last_word, sentence_length, sentence_position: int(64);
     var sen: [0..#(MAX_SENTENCE_LENGTH + 1)] int;
     var l1, l2, c, target, labelx: int(64);
-    var sentence_count = 0;
     var f, g: real;
     var atEOF = false;
 
@@ -787,24 +747,14 @@ class NetworkContext {
 
     local while (1) {
       if (mt.word_count - mt.last_word_count > updateInterval) {
-        var diff = mt.word_count - mt.last_word_count;
-        total_word_count += diff;
         mt.last_word_count = mt.word_count;
-        if mt.tid == 0 {
-          if (mt.id == 0) then reportStats(locale_sentence_count: int, alpha);
-          alpha = starting_alpha * (1 - (locale_sentence_count / (max_locale_sentences:real * numLocales)));
-          if (alpha < starting_alpha * min_alpha) then alpha = starting_alpha * min_alpha;
-        }
+        alpha = starting_alpha * (1 - (mt.last_word_count:int * num_threads:int) / (max_locale_words:real * numComputeLocales));
+        if (alpha < starting_alpha * min_alpha) then alpha = starting_alpha * min_alpha;
       }
       if (sentence_length == 0) {
-        if (sentence_count >= batch_size) {
-          break;
-        }
-
         while (1) {
           word = vocabContext.ReadWordIndex(mt.reader);
           if (word == -2) {
-            /*info("atEOF", tid);*/
             atEOF = true;
             break;
           }
@@ -822,19 +772,15 @@ class NetworkContext {
           if (sentence_length >= MAX_SENTENCE_LENGTH) then break;
         }
         sentence_position = 0;
-        sentence_count += 1;
-	      locale_sentence_count += 1;
       }
       if (atEOF) {
-        total_word_count += mt.word_count - mt.last_word_count;
-        mt.word_count = 0;
-        mt.last_word_count = 0;
         mt.reset();
         sentence_length = 0;
         atEOF = false;
         mt.current_iteration += 1;
-        if (mt.isDone()) then break;
-        continue;
+        /*if batch_size == 0 then break;*/
+        /*continue;*/
+        break;
       }
       word = sen[sentence_position];
       if (word == -1) then continue;
@@ -1060,8 +1006,6 @@ proc TrainModel() {
   /*var referenceNetwork = new NetworkContext(vocabContext, layer1_size, hs, negative, alpha);
   referenceNetwork.initWith(network);*/
 
-  startStats();
-
   var vocabArr: [PrivateSpace] VocabContext;
   var networkArr: [PrivateSpace] NetworkContext;
   var referenceNetworkArr: [PrivateSpace] NetworkContext;
@@ -1110,13 +1054,20 @@ proc TrainModel() {
   coforall loc in computeLocales do on loc {
     const workerId:int = here.id;
     const mtc = taskContexts[workerId][0];
+    mtc.startStats();
+    mtc.pauseStats();
 
     while (!mtc.isDone()) {
       info("training ",mtc.current_iteration);
+      mtc.resumeStats();
       /*startVdebug("training");*/
       forall tid in 0..#num_threads {
         networkArr[workerId].TrainModelThread(taskContexts[workerId][tid], batch_size/num_threads);
       }
+      var locale_word_count = (+ reduce taskContexts[workerId][0..#num_threads].last_word_count);
+      info(taskContexts[workerId][0].last_word_count);
+      mtc.pauseStats();
+      reportStats(mtc.statsTimer, locale_word_count, networkArr[workerId].max_locale_words, networkArr[workerId].alpha);
       /*stopVdebug();
       startVdebug("updating");*/
       /*info("updating");*/
@@ -1134,7 +1085,6 @@ proc TrainModel() {
         on networkArr[workerId] do networkArr[workerId].copy(referenceNetworkArr[rid], subSyn0Domain);
       }
       /*stopVdebug();*/
-
       if ((workerId == computeLocalesStart) && (save_interval > 0) && (mtc.current_iteration % save_interval == 0)) then on referenceNetwork {
         info("collecting intermediate results");
         for rid in 1..#(num_param_locales-1) {
