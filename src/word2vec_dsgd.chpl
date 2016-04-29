@@ -578,6 +578,8 @@ class ModelTaskContext {
   var trainFileName: string;
   var id: int;
   var tid: int;
+  var total_iterations: int;
+  var current_iteration: int;
   var next_random: uint(64) = tid: uint(64);
   var word_count: uint(64);
   var last_word_count: uint(64);
@@ -602,6 +604,10 @@ class ModelTaskContext {
     reader._revert();
     reader.close();
     trainFile.close();
+  }
+
+  proc isDone(): bool {
+    return current_iteration > total_iterations;
   }
 }
 
@@ -774,7 +780,7 @@ class NetworkContext {
     var f, g: real;
     var atEOF = false;
 
-    const updateInterval = 10000; //wordsPerTask / 20;
+    const updateInterval = 10000;
 
     var neu1: [LayerSpace] elemType;
     var neu1e: [LayerSpace] elemType;
@@ -826,6 +832,8 @@ class NetworkContext {
         mt.reset();
         sentence_length = 0;
         atEOF = false;
+        mt.current_iteration += 1;
+        if (mt.isDone()) then break;
         continue;
       }
       word = sen[sentence_position];
@@ -1090,7 +1098,7 @@ proc TrainModel() {
 
   for loc in computeLocales do on loc {
     for tid in 0..#num_threads {
-      taskContexts[here.id][tid] = new ModelTaskContext(train_file.localize(), here.id, tid);
+      taskContexts[here.id][tid] = new ModelTaskContext(train_file.localize(), here.id, tid, iterations);
       taskContexts[here.id][tid].init();
     }
   }
@@ -1101,9 +1109,10 @@ proc TrainModel() {
   /*startVdebug("network");*/
   coforall loc in computeLocales do on loc {
     const workerId:int = here.id;
+    const mtc = taskContexts[workerId][0];
 
-    for batch in 0..#iterations {
-      info("training ",batch);
+    while (!mtc.isDone()) {
+      info("training ",mtc.current_iteration);
       /*startVdebug("training");*/
       forall tid in 0..#num_threads {
         networkArr[workerId].TrainModelThread(taskContexts[workerId][tid], batch_size/num_threads);
@@ -1126,7 +1135,7 @@ proc TrainModel() {
       }
       /*stopVdebug();*/
 
-      if ((workerId == computeLocalesStart) && (save_interval > 0) && (batch % save_interval == 0)) then on referenceNetwork {
+      if ((workerId == computeLocalesStart) && (save_interval > 0) && (mtc.current_iteration % save_interval == 0)) then on referenceNetwork {
         info("collecting intermediate results");
         for rid in 1..#(num_param_locales-1) {
           const subDomainStart = (rid * domSliceSize):int;
@@ -1134,7 +1143,7 @@ proc TrainModel() {
           referenceNetwork.copy(referenceNetworkArr[rid], subSyn0Domain);
         }
         info("saving intermediate results");
-        writeResults(output_file.localize() + "." + batch, referenceNetwork);
+        writeResults(output_file.localize() + "." + mtc.current_iteration, referenceNetwork);
       }
     }
   }
