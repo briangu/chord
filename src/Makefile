@@ -10,7 +10,7 @@ word2vec_dmapped: word2vec_dmapped.chpl
 	chpl --print-passes --fast -o ../bin/word2vec word2vec_dmapped.chpl
 
 word2vec_dsgd: word2vec_dsgd.chpl
-	chpl --print-passes --fast -g --savec=codeC  -o ../bin/word2vec word2vec_dsgd.chpl
+	chpl --print-passes --fast -o ../bin/word2vec word2vec_dsgd.chpl
 
 word2vec_classic: word2vec_classic.chpl
 	chpl --print-passes --fast --local -o ../bin/word2vec word2vec_classic.chpl
