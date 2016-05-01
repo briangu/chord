@@ -713,21 +713,27 @@ class NetworkContext {
 
     {
       onloczero[syn0Domain] = latest.syn0[syn0Domain];
-      onloczero[syn0Domain] -= syn0[syn0Domain];
-      onloczero[syn0Domain] /= numComputeLocales;
-      syn0[dom] += onloczero[dom];
+      local {
+        onloczero[syn0Domain] -= syn0[syn0Domain];
+        onloczero[syn0Domain] /= numComputeLocales;
+        syn0[dom] += onloczero[dom];
+      }
     }
     if (hs) then {
       onloczero[syn1Domain] = latest.syn1[syn1Domain];
-      onloczero[syn1Domain] -= syn1[syn1Domain];
-      onloczero[syn1Domain] /= numComputeLocales;
-      syn1[dom] += onloczero[dom];
+      local {
+        onloczero[syn1Domain] -= syn1[syn1Domain];
+        onloczero[syn1Domain] /= numComputeLocales;
+        syn1[dom] += onloczero[dom];
+      }
     }
     if (negative) then {
       onloczero[syn1negDomain] = latest.syn1neg[syn1negDomain];
-      onloczero[syn1negDomain] -= syn1neg[syn1negDomain];
-      onloczero[syn1negDomain] /= numComputeLocales;
-      syn1neg[dom] += onloczero[dom];
+      local {
+        onloczero[syn1negDomain] -= syn1neg[syn1negDomain];
+        onloczero[syn1negDomain] /= numComputeLocales;
+        syn1neg[dom] += onloczero[dom];
+      }
     }
 
     /*info("stopping update ", id, " ", dom);*/
@@ -1062,7 +1068,7 @@ proc TrainModel() {
       mtc.resumeStats();
       /*startVdebug("training");*/
       forall tid in 0..#num_threads {
-        networkArr[workerId].TrainModelThread(taskContexts[workerId][tid], batch_size/num_threads);
+        local networkArr[workerId].TrainModelThread(taskContexts[workerId][tid], batch_size/num_threads);
       }
       var locale_word_count = (+ reduce taskContexts[workerId][0..#num_threads].last_word_count);
       info(taskContexts[workerId][0].last_word_count);
