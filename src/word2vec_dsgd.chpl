@@ -552,7 +552,7 @@ class ModelTaskContext {
   var trainFile = open(trainFileName, iomode.r);
   const fileChunkSize = trainFile.length() / numComputeLocales;
   const taskFileChunkSize = fileChunkSize / num_threads;
-  const seekStart = fileChunkSize * (id - computeLocalesStart) + taskFileChunkSize * tid;
+  const seekStart = fileChunkSize * id + taskFileChunkSize * tid;
   const seekStop = seekStart + taskFileChunkSize;
   var reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop, locking=false);
   var statsTimer: Timer;
@@ -1024,19 +1024,19 @@ proc TrainModel() {
   coforall loc in Locales do on loc {
     if (here.id >= computeLocalesStart) {
       info("creating worker");
+      vocabArr[here.id] = new VocabContext();
+      vocabArr[here.id].loadFromFile(train_file.localize(), read_vocab_file.localize(), save_vocab_file.localize(), negative);
+      networkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
+      networkArr[here.id].initWith(network);
+    } else {
+      info("creating reference");
       if here.id == 0 {
         vocabArr[here.id] = vocabContext;
         networkArr[here.id] = network;
       } else {
         vocabArr[here.id] = new VocabContext();
         vocabArr[here.id].loadFromFile(train_file.localize(), read_vocab_file.localize(), save_vocab_file.localize(), negative);
-        networkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
-        networkArr[here.id].initWith(network);
       }
-    } else {
-      info("creating reference");
-      vocabArr[here.id] = new VocabContext();
-      vocabArr[here.id].loadFromFile(train_file.localize(), read_vocab_file.localize(), save_vocab_file.localize(), negative);
       referenceNetworkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
       referenceNetworkArr[here.id].initWith(network);
     }
@@ -1052,7 +1052,8 @@ proc TrainModel() {
 
   for loc in computeLocales do on loc {
     for tid in 0..#num_threads {
-      taskContexts[here.id][tid] = new ModelTaskContext(train_file.localize(), here.id, tid, iterations);
+      const id = here.id - computeLocalesStart;
+      taskContexts[here.id][tid] = new ModelTaskContext(train_file.localize(), id, tid, iterations);
       taskContexts[here.id][tid].init();
     }
   }
