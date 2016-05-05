@@ -37,10 +37,11 @@ config const size = 100;
 config const debug_mode = 2;
 config const num_threads = here.maxTaskPar;
 /*config const master_step = 0.5;*/
-config const update_alpha = 0.1;
 config const use_adagrad = false;
 config const num_param_locales = 1;
 config const save_interval = 0;
+config const update_alpha = 0.1;
+config const update_delta = 0.1;
 
 const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
@@ -718,9 +719,6 @@ class NetworkContext {
 
   proc update(latest: NetworkContext, remdom, id, locale_word_count) {
     const dom = {remdom.dim(1), remdom.dim(2)};
-    const delta = 0.1;
-
-    /*const masterAlpha = max(min_alpha, update_alpha * (1.0 - locale_word_count / max_locale_words:real));*/
 
     if (localCacheDomain.low > dom.low) then halt("localCacheDomain.low > dom.low", localCacheDomain);
     if (localCacheDomain.high < dom.high) then halt("localCacheDomain.high < dom.high ", localCacheDomain);
@@ -732,7 +730,7 @@ class NetworkContext {
       localCache[syn0Domain] = latest.syn0[syn0Domain];
       local {
         ssyn0[dom] += localCache[dom] ** 2;
-        const adaAlpha = 1.0 / ((1.0 / update_alpha) * (delta + sqrt(ssyn0)));
+        const adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn0)));
         syn0[dom] += localCache[dom] * adaAlpha[dom.dim(2)];
       }
     }
@@ -740,7 +738,7 @@ class NetworkContext {
       localCache[syn1Domain] = latest.syn1[syn1Domain];
       local {
         ssyn1[dom] += localCache[dom] ** 2;
-        const adaAlpha = 1.0 / ((1.0 / update_alpha) * (delta + sqrt(ssyn1)));
+        const adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn1)));
         syn1[dom] += localCache[dom] * adaAlpha[dom.dim(2)];
       }
     }
@@ -748,7 +746,7 @@ class NetworkContext {
       localCache[syn1negDomain] = latest.syn1neg[syn1negDomain];
       local {
         ssyn1neg[dom] += localCache[dom] ** 2;
-        const adaAlpha = 1.0 / ((1.0 / update_alpha) * (delta + sqrt(ssyn1neg)));
+        const adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn1neg)));
         syn1neg[dom] += localCache[dom] * adaAlpha[dom.dim(2)];
       }
     }
