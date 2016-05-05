@@ -734,7 +734,7 @@ class NetworkContext {
         localCache[dom] /= masterAlpha;
         ssyn0[dom] += localCache[dom] ** 2;
         const adaAlpha = masterAlpha / (fudge_factor + sqrt(ssyn0));
-        syn0[dom] += localCache[dom] * adaAlpha[dom];
+        syn0[dom] += localCache[dom] * adaAlpha[dom.dim(2)];
       }
     }
     if (hs) then {
@@ -743,7 +743,7 @@ class NetworkContext {
         localCache[dom] /= masterAlpha;
         ssyn1[dom] += localCache[dom] ** 2;
         const adaAlpha = masterAlpha / (fudge_factor + sqrt(ssyn1));
-        syn1[dom] += localCache[dom] * adaAlpha[dom];
+        syn1[dom] += localCache[dom] * adaAlpha[dom.dim(2)];
       }
     }
     if (negative) then {
@@ -752,7 +752,7 @@ class NetworkContext {
         localCache[dom] /= masterAlpha;
         ssyn1neg[dom] += localCache[dom] ** 2;
         const adaAlpha = masterAlpha / (fudge_factor + sqrt(ssyn1neg));
-        syn1neg[dom] += localCache[dom] * adaAlpha[dom];
+        syn1neg[dom] += localCache[dom] * adaAlpha[dom.dim(2)];
       }
     }
   }
