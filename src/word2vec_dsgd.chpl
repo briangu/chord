@@ -615,11 +615,8 @@ class NetworkContext {
 
   const LayerSpace = {0..#layer1_size};
 
-  const ZeroLocalesView = {0..#1, 1..1};
-  const ZeroLocales: [ZeroLocalesView] locale = reshape(Locales[0..0], ZeroLocalesView);
-
-  var onloczeroDomain: domain(2) = syn0Domain; // dmapped Block(boundingBox=syn0Domain, targetLocales=ZeroLocales);
-  var onloczero: [onloczeroDomain] elemType;
+  var localCacheDomain: domain(2) = syn0Domain;
+  var localCache: [localCacheDomain] elemType;
 
   proc InitExpTable() {
     for i in 0..#EXP_TABLE_SIZE {
@@ -651,17 +648,17 @@ class NetworkContext {
   proc copy(networkContext: NetworkContext, remdom) {
     const dom = {remdom.dim(1), remdom.dim(2)};
 
-    onloczero[syn0Domain] = networkContext.syn0[syn0Domain];
-    local this.syn0[dom] = onloczero[dom];
+    localCache[syn0Domain] = networkContext.syn0[syn0Domain];
+    local this.syn0[dom] = localCache[dom];
 
     if hs {
-      onloczero[syn1Domain] = networkContext.syn1[syn1Domain];
-      local this.syn1[dom] = onloczero[dom];
+      localCache[syn1Domain] = networkContext.syn1[syn1Domain];
+      local this.syn1[dom] = localCache[dom];
     }
 
     if negative {
-      onloczero[syn1negDomain] = networkContext.syn1neg[syn1negDomain];
-      local this.syn1neg[dom] = onloczero[dom];
+      localCache[syn1negDomain] = networkContext.syn1neg[syn1negDomain];
+      local this.syn1neg[dom] = localCache[dom];
     }
   }
 
@@ -676,67 +673,71 @@ class NetworkContext {
 
     {
       const dom = syn0Domain;
-      onloczero[dom] = latest.syn0[dom];
-      onloczero[dom] = syn0[dom] - onloczero[dom];
-      onloczero[dom] /= masterAlpha;
-      ssyn0[dom] += onloczero[dom] ** 2;
+      localCache[dom] = latest.syn0[dom];
+      localCache[dom] = syn0[dom] - localCache[dom];
+      localCache[dom] /= masterAlpha;
+      ssyn0[dom] += localCache[dom] ** 2;
       const adaAlpha = masterAlpha / (fudge_factor + sqrt(ssyn0));
-      syn0[dom] += onloczero[dom] * adaAlpha;
+      syn0[dom] += localCache[dom] * adaAlpha;
     }
     if (hs) then {
       const dom = syn1Domain;
-      onloczero[dom] = latest.syn1[dom];
-      onloczero[dom] = syn1[dom] - onloczero[dom];
-      onloczero[dom] /= masterAlpha;
-      ssyn1[dom] += onloczero[dom] ** 2;
+      localCache[dom] = latest.syn1[dom];
+      localCache[dom] = syn1[dom] - localCache[dom];
+      localCache[dom] /= masterAlpha;
+      ssyn1[dom] += localCache[dom] ** 2;
       const adaAlpha = masterAlpha / (fudge_factor + sqrt(ssyn1));
-      syn1[dom] += onloczero[dom] * adaAlpha;
+      syn1[dom] += localCache[dom] * adaAlpha;
     }
     if (negative) then {
       const dom = syn1negDomain;
-      onloczero[dom] = latest.syn1neg[dom];
-      onloczero[dom] = syn1neg[dom] - onloczero[dom];
-      onloczero[dom] /= masterAlpha;
-      ssyn1neg[dom] += onloczero[dom] ** 2;
+      localCache[dom] = latest.syn1neg[dom];
+      localCache[dom] = syn1neg[dom] - localCache[dom];
+      localCache[dom] /= masterAlpha;
+      ssyn1neg[dom] += localCache[dom] ** 2;
       const adaAlpha = masterAlpha / (fudge_factor + sqrt(ssyn1neg));
-      syn1neg[dom] += onloczero[dom] * adaAlpha;
+      syn1neg[dom] += localCache[dom] * adaAlpha;
     }
 
     info("stopping update", tid);
   }*/
 
-  proc update(latest: NetworkContext, remdom, id) {
+  proc update(reference: NetworkContext, latest: NetworkContext, remdom, id) {
     const dom = {remdom.dim(1), remdom.dim(2)};
 
     /*info("starting update ", id, " ", dom);*/
 
-    if (onloczeroDomain.low > dom.low) then halt("onloczeroDomain.low > dom.low", onloczeroDomain);
-    if (onloczeroDomain.high < dom.high) then halt("onloczeroDomain.high < dom.high ", onloczeroDomain);
+    if (localCacheDomain.low > dom.low) then halt("localCacheDomain.low > dom.low", localCacheDomain);
+    if (localCacheDomain.high < dom.high) then halt("localCacheDomain.high < dom.high ", localCacheDomain);
     if (syn0Domain.low > dom.low) then halt("syn0Domain.low > dom.low ", syn0Domain);
     if (syn0Domain.high < dom.high) then halt("syn0Domain.high < dom.high ", syn0Domain);
 
     {
-      onloczero[syn0Domain] = latest.syn0[syn0Domain];
+      // speed up the local operations by first coping the entire array over the the current local before we do math
+      latest.syn0[syn0Domain] -= reference.syn0[syn0Domain];
+      localCache[syn0Domain] = latest.syn0[syn0Domain];
       local {
-        onloczero[syn0Domain] -= syn0[syn0Domain];
-        onloczero[syn0Domain] /= numComputeLocales;
-        syn0[dom] += onloczero[dom];
+        /*localCache[syn0Domain] -= syn0[syn0Domain];*/
+        /*localCache[syn0Domain] /= numComputeLocales;*/
+        syn0[dom] += localCache[dom];
       }
     }
     if (hs) then {
-      onloczero[syn1Domain] = latest.syn1[syn1Domain];
+      latest.syn1[syn1Domain] -= reference.syn1[syn1Domain];
+      localCache[syn1Domain] = latest.syn1[syn1Domain];
       local {
-        onloczero[syn1Domain] -= syn1[syn1Domain];
-        onloczero[syn1Domain] /= numComputeLocales;
-        syn1[dom] += onloczero[dom];
+        /*localCache[syn1Domain] -= syn1[syn1Domain];*/
+        /*localCache[syn1Domain] /= numComputeLocales;*/
+        syn1[dom] += localCache[dom];
       }
     }
     if (negative) then {
-      onloczero[syn1negDomain] = latest.syn1neg[syn1negDomain];
+      latest.syn1neg[syn1negDomain] -= reference.syn1neg[syn1negDomain];
+      localCache[syn1negDomain] = latest.syn1neg[syn1negDomain];
       local {
-        onloczero[syn1negDomain] -= syn1neg[syn1negDomain];
-        onloczero[syn1negDomain] /= numComputeLocales;
-        syn1neg[dom] += onloczero[dom];
+        /*localCache[syn1negDomain] -= syn1neg[syn1negDomain];*/
+        /*localCache[syn1negDomain] /= numComputeLocales;*/
+        syn1neg[dom] += localCache[dom];
       }
     }
 
@@ -1022,24 +1023,22 @@ proc TrainModel() {
 
   // run on a single locale using all threads available
   coforall loc in Locales do on loc {
-    if (here.id >= computeLocalesStart) {
-      info("creating worker");
+    if here.id == 0 {
+      vocabArr[here.id] = vocabContext;
+    } else {
       vocabArr[here.id] = new VocabContext();
       vocabArr[here.id].loadFromFile(train_file.localize(), read_vocab_file.localize(), save_vocab_file.localize(), negative);
-      networkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
-      networkArr[here.id].initWith(network);
-    } else {
-      info("creating reference");
+    }
+    if (here.id >= computeLocalesStart) {
       if here.id == 0 {
-        vocabArr[here.id] = vocabContext;
         networkArr[here.id] = network;
       } else {
-        vocabArr[here.id] = new VocabContext();
-        vocabArr[here.id].loadFromFile(train_file.localize(), read_vocab_file.localize(), save_vocab_file.localize(), negative);
+        networkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
+        networkArr[here.id].initWith(network);
       }
-      referenceNetworkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
-      referenceNetworkArr[here.id].initWith(network);
     }
+    referenceNetworkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
+    referenceNetworkArr[here.id].initWith(network);
   }
 
   const referenceNetwork = referenceNetworkArr[0];
@@ -1069,9 +1068,7 @@ proc TrainModel() {
     mtc.pauseStats();
 
     while (!mtc.isDone()) {
-      /*info("training ",mtc.current_iteration);*/
       mtc.resumeStats();
-      /*startVdebug("training");*/
       forall tid in 0..#num_threads {
         networkArr[workerId].TrainModelThread(taskContexts[workerId][tid], batch_size/num_threads);
       }
@@ -1080,24 +1077,19 @@ proc TrainModel() {
       var locale_word_count = (+ reduce taskContexts[workerId][0..#num_threads].last_word_count);
       /*info(taskContexts[workerId][0].last_word_count, ' ', locale_word_count, ' ', networkArr[workerId].max_locale_words);*/
       reportStats(mtc.statsTimer, locale_word_count, networkArr[workerId].max_locale_words, networkArr[workerId].alpha);
-      /*stopVdebug();
-      startVdebug("updating");*/
 
-      /*info("updating");*/
       for rid in 0..#num_param_locales {
         const subDomainStart = (rid * domSliceSize):int;
         const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart..#domSliceSize};
-        /*info(subSyn0Domain);*/
-        on referenceNetworkArr[rid] do referenceNetworkArr[rid].update(networkArr[workerId], subSyn0Domain, workerId);
+        on referenceNetworkArr[rid] do referenceNetworkArr[rid].update(referenceNetworkArr[workerId], networkArr[workerId], subSyn0Domain, workerId);
       }
 
-      /*info("copying");*/
       for rid in 0..#num_param_locales {
         const subDomainStart = (rid * domSliceSize):int;
         const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart..#domSliceSize};
-        on networkArr[workerId] do networkArr[workerId].copy(referenceNetworkArr[rid], subSyn0Domain);
+        networkArr[workerId].copy(referenceNetworkArr[rid], subSyn0Domain);
       }
-      /*stopVdebug();*/
+      referenceNetworkArr[workerId].copy(networkArr[workerId], networkArr[workerId].syn0Domain);
 
       if ((workerId == computeLocalesStart) && (save_interval > 0) && (mtc.current_iteration % save_interval == 0)) then on referenceNetwork {
         info("collecting intermediate results");
