@@ -716,10 +716,11 @@ class NetworkContext {
     /*info("stopping update ", id, " ", dom);*/
   }
 
-  proc update(latest: NetworkContext, remdom, id) {
+  proc update(latest: NetworkContext, remdom, id, locale_word_count) {
     const dom = {remdom.dim(1), remdom.dim(2)};
+    const fudge_factor = 1e-6;
 
-    /*info("starting update ", id, " ", dom);*/
+    const masterAlpha = max(min_alpha, update_alpha * (1.0 - locale_word_count / max_locale_words:real));
 
     if (localCacheDomain.low > dom.low) then halt("localCacheDomain.low > dom.low", localCacheDomain);
     if (localCacheDomain.high < dom.high) then halt("localCacheDomain.high < dom.high ", localCacheDomain);
@@ -730,29 +731,30 @@ class NetworkContext {
       // speed up the local operations by first coping the entire array over the the current local before we do math
       localCache[syn0Domain] = latest.syn0[syn0Domain];
       local {
-        /*localCache[syn0Domain] -= syn0[syn0Domain];*/
-        /*localCache[syn0Domain] /= numComputeLocales;*/
-        syn0[dom] += localCache[dom];
+        localCache[dom] /= masterAlpha;
+        ssyn0[dom] += localCache[dom] ** 2;
+        const adaAlpha = masterAlpha / (fudge_factor + sqrt(ssyn0));
+        syn0[dom] += localCache[dom] * adaAlpha;
       }
     }
     if (hs) then {
       localCache[syn1Domain] = latest.syn1[syn1Domain];
       local {
-        /*localCache[syn1Domain] -= syn1[syn1Domain];*/
-        /*localCache[syn1Domain] /= numComputeLocales;*/
-        syn1[dom] += localCache[dom];
+        localCache[dom] /= masterAlpha;
+        ssyn1[dom] += localCache[dom] ** 2;
+        const adaAlpha = masterAlpha / (fudge_factor + sqrt(ssyn1));
+        syn1[dom] += localCache[dom] * adaAlpha;
       }
     }
     if (negative) then {
       localCache[syn1negDomain] = latest.syn1neg[syn1negDomain];
       local {
-        /*localCache[syn1negDomain] -= syn1neg[syn1negDomain];*/
-        /*localCache[syn1negDomain] /= numComputeLocales;*/
-        syn1neg[dom] += localCache[dom];
+        localCache[dom] /= masterAlpha;
+        ssyn1neg[dom] += localCache[dom] ** 2;
+        const adaAlpha = masterAlpha / (fudge_factor + sqrt(ssyn1neg));
+        syn1neg[dom] += localCache[dom] * adaAlpha;
       }
     }
-
-    /*info("stopping update ", id, " ", dom);*/
   }
 
   proc TrainModelThread(mt: ModelTaskContext, batch_size: int) {
@@ -1093,7 +1095,7 @@ proc TrainModel() {
         const subDomainStart = (rid * domSliceSize):int;
         const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart..#domSliceSize};
         networkArr[workerId].computeGradient(referenceNetworkArr[workerId]);
-        on referenceNetworkArr[rid] do referenceNetworkArr[rid].update(networkArr[workerId], subSyn0Domain, workerId);
+        on referenceNetworkArr[rid] do referenceNetworkArr[rid].update(networkArr[workerId], subSyn0Domain, workerId, locale_word_count);
       }
 
       for rid in 0..#num_param_locales {
