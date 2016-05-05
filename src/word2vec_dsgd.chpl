@@ -740,7 +740,7 @@ class NetworkContext {
       localCache[syn1Domain] = latest.syn1[syn1Domain];
       local {
         ssyn1[dom] += localCache[dom] ** 2;
-        const adaAlpha = 1.0 / ((1.0 / update_alpha) * (delta + sqrt(syn1)));
+        const adaAlpha = 1.0 / ((1.0 / update_alpha) * (delta + sqrt(ssyn1)));
         syn1[dom] += localCache[dom] * adaAlpha[dom.dim(2)];
       }
     }
@@ -748,7 +748,7 @@ class NetworkContext {
       localCache[syn1negDomain] = latest.syn1neg[syn1negDomain];
       local {
         ssyn1neg[dom] += localCache[dom] ** 2;
-        const adaAlpha = 1.0 / ((1.0 / update_alpha) * (delta + sqrt(syn1neg)));
+        const adaAlpha = 1.0 / ((1.0 / update_alpha) * (delta + sqrt(ssyn1neg)));
         syn1neg[dom] += localCache[dom] * adaAlpha[dom.dim(2)];
       }
     }
