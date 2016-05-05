@@ -73,7 +73,7 @@ proc reportStats(statsTimer, locale_word_count, max_locale_words, alpha) {
   var now = statsTimer.elapsed(TimeUnits.milliseconds);
   writef("\rAlpha: %r  Progress: %0.3r%%  Words/sec: %rk  Words/thread/sec: %rk   ",
         alpha,
-        (locale_word_count / max_locale_words:real) * 100,
+        min(100.0, (locale_word_count / max_locale_words:real) * 100),
         (locale_word_count * numComputeLocales:real) / ((now + 1) / 1000) / 1000,
         (locale_word_count / num_threads:real) / ((now + 1) / 1000) / 1000);
   stdout.flush();
