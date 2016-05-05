@@ -702,7 +702,21 @@ class NetworkContext {
     info("stopping update", tid);
   }*/
 
-  proc update(reference: NetworkContext, latest: NetworkContext, remdom, id) {
+  proc computeGradient(reference: NetworkContext) {
+    if (reference.locale.id != here.id) then halt("reference.locale.id != here.id");
+
+    local syn0[syn0Domain] -= reference.syn0[syn0Domain];
+    if (hs) then {
+      local syn1[syn1Domain] -= reference.syn1[syn1Domain];
+    }
+    if (negative) then {
+      local syn1neg[syn1negDomain] -= reference.syn1neg[syn1negDomain];
+    }
+
+    /*info("stopping update ", id, " ", dom);*/
+  }
+
+  proc update(latest: NetworkContext, remdom, id) {
     const dom = {remdom.dim(1), remdom.dim(2)};
 
     /*info("starting update ", id, " ", dom);*/
@@ -714,7 +728,6 @@ class NetworkContext {
 
     {
       // speed up the local operations by first coping the entire array over the the current local before we do math
-      local latest.syn0[syn0Domain] -= reference.syn0[syn0Domain];
       localCache[syn0Domain] = latest.syn0[syn0Domain];
       local {
         /*localCache[syn0Domain] -= syn0[syn0Domain];*/
@@ -723,7 +736,6 @@ class NetworkContext {
       }
     }
     if (hs) then {
-      local latest.syn1[syn1Domain] -= reference.syn1[syn1Domain];
       localCache[syn1Domain] = latest.syn1[syn1Domain];
       local {
         /*localCache[syn1Domain] -= syn1[syn1Domain];*/
@@ -732,7 +744,6 @@ class NetworkContext {
       }
     }
     if (negative) then {
-      local latest.syn1neg[syn1negDomain] -= reference.syn1neg[syn1negDomain];
       localCache[syn1negDomain] = latest.syn1neg[syn1negDomain];
       local {
         /*localCache[syn1negDomain] -= syn1neg[syn1negDomain];*/
@@ -1081,7 +1092,8 @@ proc TrainModel() {
       for rid in 0..#num_param_locales {
         const subDomainStart = (rid * domSliceSize):int;
         const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart..#domSliceSize};
-        on referenceNetworkArr[rid] do referenceNetworkArr[rid].update(referenceNetworkArr[workerId], networkArr[workerId], subSyn0Domain, workerId);
+        networkArr[workerId].computeGradient(referenceNetworkArr[workerId]);
+        on referenceNetworkArr[rid] do referenceNetworkArr[rid].update(networkArr[workerId], subSyn0Domain, workerId);
       }
 
       for rid in 0..#num_param_locales {
