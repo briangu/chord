@@ -16,7 +16,7 @@ if [ ! -e $VECTOR_DATA ]; then
   fi
   echo -----------------------------------------------------------------------------------------------------
   echo -- Training vectors...
-  time $BIN_DIR/word2vec -nl 1 --train_file $TEXT_DATA --output_file $VECTOR_DATA --cbow 0 --size 200 --window 5 --negative 0 --hs 1 --sample 1e-3 --binary 1
+  time $BIN_DIR/word2vec -nl 2 --train_file $TEXT_DATA --output_file $VECTOR_DATA --cbow 0 --size 200 --window 5 --negative 0 --hs 1 --sample 1e-3 --binary 1
 fi
 
 #echo -----------------------------------------------------------------------------------------------------
