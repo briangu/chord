@@ -31,6 +31,12 @@ Run demo-word.sh
     cd scripts
     ./demo-word.sh
 
+Run word2vec_classic in local mode:
+
+    cd src
+    make word2vec_classic
+    time ../bin/word2vec -nl 5 --train_file ../data/text8 --output_file ../data/vectors.bin --cbow 1 --size 200 --window 8 --negative 25 --hs 0 --sample 1e-4 --binary 1 --read_vocab_file=../data/vocab.txt
+
 References
 ==========
 

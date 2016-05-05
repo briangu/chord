@@ -508,7 +508,7 @@ proc TrainModelThread(tf: string, id: int) {
       last_word_count = word_count;
       if (debug_mode > 1) {
         var now = t.elapsed(TimeUnits.milliseconds);
-        writef("\rAlpha: %r  Progress: %0.2r%%  Words/thread/sec: %rk  ",
+        writef("\rAlpha: %r  Progress: %0.3r%%  Words/thread/sec: %rk  ",
               alpha,
               (word_count_actual / (iterations * train_words + 1):real) * 100,
               word_count_actual / ((now - start + 1) / 1000) / 1000);

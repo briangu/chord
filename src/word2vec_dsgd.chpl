@@ -71,7 +71,7 @@ writeln("num_param_locales ", num_param_locales);
 
 proc reportStats(statsTimer, locale_word_count, max_locale_words, alpha) {
   var now = statsTimer.elapsed(TimeUnits.milliseconds);
-  writef("\rAlpha: %r  Progress: %0.2r%%  Words/sec: %rk  Words/thread/sec: %rk",
+  writef("\rAlpha: %r  Progress: %0.3r%%  Words/sec: %rk  Words/thread/sec: %rk   ",
         alpha,
         (locale_word_count / max_locale_words:real) * 100,
         (locale_word_count * numComputeLocales:real) / ((now + 1) / 1000) / 1000,
@@ -1069,14 +1069,14 @@ proc TrainModel() {
     mtc.pauseStats();
 
     while (!mtc.isDone()) {
-      info("training ",mtc.current_iteration);
+      /*info("training ",mtc.current_iteration);*/
       mtc.resumeStats();
       /*startVdebug("training");*/
       forall tid in 0..#num_threads {
         networkArr[workerId].TrainModelThread(taskContexts[workerId][tid], batch_size/num_threads);
       }
       var locale_word_count = (+ reduce taskContexts[workerId][0..#num_threads].last_word_count);
-      info(taskContexts[workerId][0].last_word_count);
+      /*info(taskContexts[workerId][0].last_word_count);*/
       mtc.pauseStats();
       reportStats(mtc.statsTimer, locale_word_count, networkArr[workerId].max_locale_words, networkArr[workerId].alpha);
       /*stopVdebug();

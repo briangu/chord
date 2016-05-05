@@ -3,7 +3,7 @@ BIN_DIR=../bin
 SRC_DIR=../src
 
 TEXT_DATA=$DATA_DIR/text8
-VECTOR_DATA=$DATA_DIR/text8-vector.bin
+VECTOR_DATA=$DATA_DIR/vectors.bin
 
 pushd ${SRC_DIR} && make; popd
 
