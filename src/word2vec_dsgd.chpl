@@ -714,7 +714,7 @@ class NetworkContext {
 
     {
       // speed up the local operations by first coping the entire array over the the current local before we do math
-      latest.syn0[syn0Domain] -= reference.syn0[syn0Domain];
+      local latest.syn0[syn0Domain] -= reference.syn0[syn0Domain];
       localCache[syn0Domain] = latest.syn0[syn0Domain];
       local {
         /*localCache[syn0Domain] -= syn0[syn0Domain];*/
@@ -723,7 +723,7 @@ class NetworkContext {
       }
     }
     if (hs) then {
-      latest.syn1[syn1Domain] -= reference.syn1[syn1Domain];
+      local latest.syn1[syn1Domain] -= reference.syn1[syn1Domain];
       localCache[syn1Domain] = latest.syn1[syn1Domain];
       local {
         /*localCache[syn1Domain] -= syn1[syn1Domain];*/
@@ -732,7 +732,7 @@ class NetworkContext {
       }
     }
     if (negative) then {
-      latest.syn1neg[syn1negDomain] -= reference.syn1neg[syn1negDomain];
+      local latest.syn1neg[syn1negDomain] -= reference.syn1neg[syn1negDomain];
       localCache[syn1negDomain] = latest.syn1neg[syn1negDomain];
       local {
         /*localCache[syn1negDomain] -= syn1neg[syn1negDomain];*/
