@@ -24,7 +24,7 @@ config const read_vocab_file = "";
 config const output_file: string = "";
 config const hs = 0;
 config const negative = 5;
-config const iterations = 100000;
+config const iterations = 5;
 config const batch_size = 0;
 config const window = 5;
 config const cbow = 1;
@@ -1075,9 +1075,10 @@ proc TrainModel() {
       forall tid in 0..#num_threads {
         networkArr[workerId].TrainModelThread(taskContexts[workerId][tid], batch_size/num_threads);
       }
-      var locale_word_count = (+ reduce taskContexts[workerId][0..#num_threads].last_word_count);
-      /*info(taskContexts[workerId][0].last_word_count);*/
       mtc.pauseStats();
+
+      var locale_word_count = (+ reduce taskContexts[workerId][0..#num_threads].last_word_count);
+      /*info(taskContexts[workerId][0].last_word_count, ' ', locale_word_count, ' ', networkArr[workerId].max_locale_words);*/
       reportStats(mtc.statsTimer, locale_word_count, networkArr[workerId].max_locale_words, networkArr[workerId].alpha);
       /*stopVdebug();
       startVdebug("updating");*/
