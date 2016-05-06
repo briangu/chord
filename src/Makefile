@@ -1,6 +1,3 @@
-CC=clang
-CFLAGS=-I$(IDIR) -I.
-
 all: bin word2vec_dsgd
 
 bin:
