@@ -590,14 +590,14 @@ class ModelTaskContext {
 
   proc summarize() {
     writeln(id, " ", tid);
-    writeln("\t fileChunkSize", fileChunkSize);
-    writeln("\t taskFileChunkSize", taskFileChunkSize);
-    writeln("\t seekStart", seekStart);
-    writeln("\t seekStop", seekStop);
-    writeln("\t loopCounts", loopCounts);
-    writeln("\t total_iterations", total_iterations);
-    writeln("\t word_count", word_count);
-    writeln("\t last_word_count", last_word_count);
+    writeln("\t fileChunkSize ", fileChunkSize);
+    writeln("\t taskFileChunkSize ", taskFileChunkSize);
+    writeln("\t seekStart ", seekStart);
+    writeln("\t seekStop ", seekStop);
+    writeln("\t loopCounts ", loopCounts);
+    writeln("\t total_iterations ", total_iterations);
+    writeln("\t word_count ", word_count);
+    writeln("\t last_word_count ", last_word_count);
   }
 }
 
