@@ -25,7 +25,6 @@ config const output_file: string = "";
 config const hs = 0;
 config const negative = 5;
 config const iterations = 5;
-config const batch_size = 0;
 config const window = 5;
 config const cbow = 1;
 config const binary = 0;
@@ -36,8 +35,6 @@ config const sample = 1e-3;
 config const size = 100;
 config const debug_mode = 2;
 config const num_threads = here.maxTaskPar;
-/*config const master_step = 0.5;*/
-config const use_adagrad = false;
 config const num_param_locales = 1;
 config const save_interval = 0;
 config const update_alpha = 0.1;
@@ -58,7 +55,6 @@ var ssyn1neg: [ssyn1degDomain] real;
 
 writeln("num_threads = ", num_threads);
 writeln("numLocales = ", numLocales);
-writeln("batch_size = ", batch_size);
 writeln("iterations = ", iterations);
 
 const computeLocalesStart = num_param_locales;
@@ -663,46 +659,6 @@ class NetworkContext {
     }
   }
 
-  /*proc updateAdaGrad(latest: NetworkContext) {
-    const tid = latest.locale.id;
-    const fudge_factor = 1e-6;
-
-    info("starting update", tid);
-    if (here.id != 0) then halt("update should occur on locale 0");
-
-    const masterAlpha = max(min_alpha, update_alpha * (1.0 - 1.0 * latest.locale_sentence_count / (max_locale_words * numLocales)));
-
-    {
-      const dom = syn0Domain;
-      localCache[dom] = latest.syn0[dom];
-      localCache[dom] = syn0[dom] - localCache[dom];
-      localCache[dom] /= masterAlpha;
-      ssyn0[dom] += localCache[dom] ** 2;
-      const adaAlpha = masterAlpha / (fudge_factor + sqrt(ssyn0));
-      syn0[dom] += localCache[dom] * adaAlpha;
-    }
-    if (hs) then {
-      const dom = syn1Domain;
-      localCache[dom] = latest.syn1[dom];
-      localCache[dom] = syn1[dom] - localCache[dom];
-      localCache[dom] /= masterAlpha;
-      ssyn1[dom] += localCache[dom] ** 2;
-      const adaAlpha = masterAlpha / (fudge_factor + sqrt(ssyn1));
-      syn1[dom] += localCache[dom] * adaAlpha;
-    }
-    if (negative) then {
-      const dom = syn1negDomain;
-      localCache[dom] = latest.syn1neg[dom];
-      localCache[dom] = syn1neg[dom] - localCache[dom];
-      localCache[dom] /= masterAlpha;
-      ssyn1neg[dom] += localCache[dom] ** 2;
-      const adaAlpha = masterAlpha / (fudge_factor + sqrt(ssyn1neg));
-      syn1neg[dom] += localCache[dom] * adaAlpha;
-    }
-
-    info("stopping update", tid);
-  }*/
-
   proc computeGradient(reference: NetworkContext) {
     if (reference.locale.id != here.id) then halt("reference.locale.id != here.id");
 
@@ -713,8 +669,6 @@ class NetworkContext {
     if (negative) then {
       local syn1neg[syn1negDomain] -= reference.syn1neg[syn1negDomain];
     }
-
-    /*info("stopping update ", id, " ", dom);*/
   }
 
   proc update(latest: NetworkContext, remdom, id, locale_word_count) {
@@ -752,20 +706,18 @@ class NetworkContext {
     }
   }
 
-  proc TrainModelThread(mt: ModelTaskContext, batch_size: int) {
+  proc TrainModelThread(mt: ModelTaskContext) {
     var a, b, d, cw, word, last_word, sentence_length, sentence_position: int(64);
     var sen: [0..#(MAX_SENTENCE_LENGTH + 1)] int;
     var l1, l2, c, target, labelx: int(64);
     var f, g: real;
     var atEOF = false;
 
-    const updateInterval = 10000;
-
     var neu1: [LayerSpace] elemType;
     var neu1e: [LayerSpace] elemType;
 
     local while (1) {
-      if (mt.word_count - mt.last_word_count > updateInterval) {
+      if (mt.word_count - mt.last_word_count > 10000) {
         mt.last_word_count = mt.word_count;
         alpha = starting_alpha * (1 - (mt.last_word_count:int * num_threads:int) / max_locale_words:real);
         if (alpha < starting_alpha * min_alpha) then alpha = starting_alpha * min_alpha;
@@ -794,11 +746,7 @@ class NetworkContext {
       }
       if (atEOF) {
         mt.reset();
-        sentence_length = 0;
-        atEOF = false;
         mt.current_iteration += 1;
-        /*if batch_size == 0 then break;*/
-        /*continue;*/
         break;
       }
       word = sen[sentence_position];
@@ -1068,7 +1016,6 @@ proc TrainModel() {
   const domSliceSize:int = ((network.vocab_size * layer1_size) / num_param_locales: real): int;
 
   // run on a single locale using all threads available
-  /*startVdebug("network");*/
   coforall loc in computeLocales do on loc {
     const workerId:int = here.id;
     const mtc = taskContexts[workerId][0];
@@ -1077,28 +1024,34 @@ proc TrainModel() {
 
     while (!mtc.isDone()) {
       mtc.resumeStats();
+      startVdebug("network");
       forall tid in 0..#num_threads {
-        networkArr[workerId].TrainModelThread(taskContexts[workerId][tid], batch_size/num_threads);
+        networkArr[workerId].TrainModelThread(taskContexts[workerId][tid]);
       }
+      stopVdebug();
       mtc.pauseStats();
 
       var locale_word_count = (+ reduce taskContexts[workerId][0..#num_threads].last_word_count);
       /*info(taskContexts[workerId][0].last_word_count, ' ', locale_word_count, ' ', networkArr[workerId].max_locale_words);*/
       reportStats(mtc.statsTimer, locale_word_count, networkArr[workerId].max_locale_words, networkArr[workerId].alpha);
 
+      startVdebug("update");
       for rid in 0..#num_param_locales {
         const subDomainStart = (rid * domSliceSize):int;
         const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart..#domSliceSize};
         networkArr[workerId].computeGradient(referenceNetworkArr[workerId]);
         on referenceNetworkArr[rid] do referenceNetworkArr[rid].update(networkArr[workerId], subSyn0Domain, workerId, locale_word_count);
       }
+      stopVdebug();
 
+      startVdebug("copy");
       for rid in 0..#num_param_locales {
         const subDomainStart = (rid * domSliceSize):int;
         const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart..#domSliceSize};
         networkArr[workerId].copy(referenceNetworkArr[rid], subSyn0Domain);
       }
       referenceNetworkArr[workerId].copy(networkArr[workerId], networkArr[workerId].syn0Domain);
+      stopVdebug();
 
       if ((workerId == computeLocalesStart) && (save_interval > 0) && (mtc.current_iteration % save_interval == 0)) then on referenceNetwork {
         info("collecting intermediate results");
