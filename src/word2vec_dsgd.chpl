@@ -553,6 +553,7 @@ class ModelTaskContext {
   const seekStop = seekStart + taskFileChunkSize;
   var reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop, locking=false);
   var statsTimer: Timer;
+  var loopCounts: int;
 
   proc init() {
     reader.lock();
@@ -586,6 +587,18 @@ class ModelTaskContext {
   proc resumeStats() {
     statsTimer.start();
   }
+
+  proc summarize() {
+    writeln(id, " ", tid);
+    writeln("\t fileChunkSize", fileChunkSize);
+    writeln("\t taskFileChunkSize", taskFileChunkSize);
+    writeln("\t seekStart", seekStart);
+    writeln("\t seekStop", seekStop);
+    writeln("\t loopCounts", loopCounts);
+    writeln("\t total_iterations", total_iterations);
+    writeln("\t word_count", word_count);
+    writeln("\t last_word_count", last_word_count);
+  }
 }
 
 class NetworkContext {
@@ -611,6 +624,8 @@ class NetworkContext {
   var expTable: [0..#(EXP_TABLE_SIZE+1)] real;
 
   const LayerSpace = {0..#layer1_size};
+
+  var networkContextLoopCounts: int;
 
   var localCacheDomain: domain(2) = syn0Domain;
   var localCache: [localCacheDomain] elemType;
@@ -717,6 +732,9 @@ class NetworkContext {
     var neu1e: [LayerSpace] elemType;
 
     local while (1) {
+      networkContextLoopCounts += 1;
+      mt.loopCounts += 1;
+
       if (mt.word_count - mt.last_word_count > 10000) {
         mt.last_word_count = mt.word_count;
         alpha = starting_alpha * (1 - (mt.last_word_count:int * num_threads:int) / max_locale_words:real);
@@ -1086,6 +1104,13 @@ proc TrainModel() {
     writeResults(output_file, referenceNetwork);
   } else {
     runKMeans(output_file, referenceNetwork, classes);
+  }
+
+  for loc in computeLocales {
+    writeln("loc: ", loc.id, " loopCounts ", networkArr[loc.id].networkContextLoopCounts);
+    for tid in 0..#num_threads {
+      taskContexts[loc.id][tid].summarize();
+    }
   }
 }
 

@@ -39,6 +39,8 @@ const LayerSpace = {0..#layer1_size};
 
 const num_threads = here.maxTaskPar;
 
+var networkContextLoopCounts: int;
+
 class VocabWord {
   var len: int = MAX_STRING;
   var word: [0..#len] uint(8);
@@ -503,6 +505,8 @@ proc TrainModelThread(tf: string, id: int) {
   const start = t.elapsed(TimeUnits.microseconds);
 
   while (1) {
+    networkContextLoopCounts += 1;
+
     if (word_count - last_word_count > 10000) {
       word_count_actual += word_count - last_word_count;
       last_word_count = word_count;
@@ -794,4 +798,6 @@ proc main() {
     expTable[i] = expTable[i] / (expTable[i] + 1);                   // Precompute f(x) = x / (x + 1)
   }
   TrainModel();
+
+  writeln(" loopCounts ", networkContextLoopCounts);
 }
