@@ -46,13 +46,6 @@ const CRLF = ascii('\n'): uint(8);
 
 const layer1_size = size;
 
-var ssyn0Domain: domain(2);
-var ssyn0: [ssyn0Domain] real;
-var ssyn1Domain: domain(2);
-var ssyn1: [ssyn1Domain] real;
-var ssyn1degDomain: domain(2);
-var ssyn1neg: [ssyn1degDomain] real;
-
 writeln("num_threads = ", num_threads);
 writeln("numLocales = ", numLocales);
 writeln("iterations = ", iterations);
@@ -601,6 +594,13 @@ class NetworkContext {
   const train_words = vocabContext.train_words;
   const max_locale_words = (train_words * iterations) / numComputeLocales;
 
+  var ssyn0Domain: domain(2);
+  var ssyn0: [ssyn0Domain] real;
+  var ssyn1Domain: domain(2);
+  var ssyn1: [ssyn1Domain] real;
+  var ssyn1degDomain: domain(2);
+  var ssyn1neg: [ssyn1degDomain] real;
+
   const syn0Domain = {0..#1,0..#(vocab_size*layer1_size)};
   var syn0: [syn0Domain] elemType;
   const syn1Domain = if (hs) then syn0Domain else {0..#1,0..#1};
@@ -988,6 +988,10 @@ proc TrainModel() {
       vocabArr[here.id] = new VocabContext();
       vocabArr[here.id].loadFromFile(train_file.localize(), read_vocab_file.localize(), save_vocab_file.localize(), negative);
     }
+
+    referenceNetworkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
+    referenceNetworkArr[here.id].initWith(network);
+
     if (here.id >= computeLocalesStart) {
       if here.id == 0 {
         networkArr[here.id] = network;
@@ -995,16 +999,14 @@ proc TrainModel() {
         networkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
         networkArr[here.id].initWith(network);
       }
+    } else {
+      referenceNetworkArr[here.id].ssyn0Domain = network.syn0Domain;
+      referenceNetworkArr[here.id].ssyn1Domain = network.syn1Domain;
+      referenceNetworkArr[here.id].ssyn1degDomain = network.syn1negDomain;
     }
-    referenceNetworkArr[here.id] = new NetworkContext(vocabArr[here.id], layer1_size, hs, negative, alpha);
-    referenceNetworkArr[here.id].initWith(network);
   }
 
   const referenceNetwork = referenceNetworkArr[0];
-
-  ssyn0Domain = network.syn0Domain;
-  ssyn1Domain = network.syn1Domain;
-  ssyn1degDomain = network.syn1negDomain;
 
   var taskContexts: [PrivateSpace] [0..#num_threads] ModelTaskContext;
 
