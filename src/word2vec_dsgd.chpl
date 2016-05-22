@@ -537,6 +537,23 @@ class VocabContext {
   }
 }
 
+class StopWatch {
+  var statsTimer: Timer;
+
+  proc startStats() {
+    statsTimer.clear();
+    statsTimer.start();
+  }
+
+  proc pauseStats() {
+    statsTimer.stop();
+  }
+
+  proc resumeStats() {
+    statsTimer.start();
+  }
+}
+
 class ModelTaskContext {
   var trainFileName: string;
   var id: int;
@@ -552,7 +569,8 @@ class ModelTaskContext {
   const seekStart = fileChunkSize * id + taskFileChunkSize * tid;
   const seekStop = seekStart + taskFileChunkSize;
   var reader = trainFile.reader(kind = ionative, start=seekStart, end=seekStop, locking=false);
-  var statsTimer: Timer;
+  var computeStatsTimer = new StopWatch();
+  var updateStatsTimer = new StopWatch();
   var loopCounts: int;
 
   proc init() {
@@ -575,19 +593,6 @@ class ModelTaskContext {
     return current_iteration >= total_iterations;
   }
 
-  proc startStats() {
-    statsTimer.clear();
-    statsTimer.start();
-  }
-
-  proc pauseStats() {
-    statsTimer.stop();
-  }
-
-  proc resumeStats() {
-    statsTimer.start();
-  }
-
   proc summarize() {
     writeln();
     writeln(id, " ", tid);
@@ -599,6 +604,8 @@ class ModelTaskContext {
     writeln("\t total_iterations ", total_iterations);
     writeln("\t word_count ", word_count);
     writeln("\t last_word_count ", last_word_count);
+    writeln("\t compute stats time ", computeStatsTimer.statsTimer.elapsed(TimeUnits.milliseconds));
+    writeln("\t update stats time ", updateStatsTimer.statsTimer.elapsed(TimeUnits.milliseconds));
   }
 }
 
@@ -1038,21 +1045,26 @@ proc TrainModel() {
   coforall loc in computeLocales do on loc {
     const workerId:int = here.id;
     const mtc = taskContexts[workerId][0];
-    mtc.startStats();
-    mtc.pauseStats();
+    mtc.computeStatsTimer.startStats();
+    mtc.computeStatsTimer.pauseStats();
+
+    mtc.updateStatsTimer.startStats();
+    mtc.updateStatsTimer.pauseStats();
 
     while (!mtc.isDone()) {
-      mtc.resumeStats();
+      mtc.computeStatsTimer.resumeStats();
       /*startVdebug("network");*/
       forall tid in 0..#num_threads {
         networkArr[workerId].TrainModelThread(taskContexts[workerId][tid]);
       }
       /*stopVdebug();*/
-      mtc.pauseStats();
+      mtc.computeStatsTimer.pauseStats();
 
       var locale_word_count = (+ reduce taskContexts[workerId][0..#num_threads].last_word_count);
       /*info(taskContexts[workerId][0].last_word_count, ' ', locale_word_count, ' ', networkArr[workerId].max_locale_words);*/
-      reportStats(mtc.statsTimer, locale_word_count, networkArr[workerId].max_locale_words, networkArr[workerId].alpha);
+      reportStats(mtc.computeStatsTimer.statsTimer, locale_word_count, networkArr[workerId].max_locale_words, networkArr[workerId].alpha);
+
+      mtc.updateStatsTimer.resumeStats();
 
       /*startVdebug("update");*/
       for rid in 0..#num_param_locales {
@@ -1071,6 +1083,8 @@ proc TrainModel() {
       }
       referenceNetworkArr[workerId].copy(networkArr[workerId], networkArr[workerId].syn0Domain);
       /*stopVdebug();*/
+
+      mtc.updateStatsTimer.pauseStats();
 
       if ((workerId == computeLocalesStart) && (save_interval > 0) && (mtc.current_iteration % save_interval == 0)) then on referenceNetwork {
         info("collecting intermediate results");
