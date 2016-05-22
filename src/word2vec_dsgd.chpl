@@ -679,29 +679,32 @@ class NetworkContext {
     if (syn0Domain.low > dom.low) then halt("syn0Domain.low > dom.low ", syn0Domain);
     if (syn0Domain.high < dom.high) then halt("syn0Domain.high < dom.high ", syn0Domain);
 
+    var adaAlpha: [{dom.dim(1), remdom.dim(2).translate(1)}] elemType;
+    var zAdaAlpha: [dom] => adaAlpha;
+
     {
       // speed up the local operations by first coping the entire array over the the current local before we do math
       localCache[syn0Domain] = latest.syn0[syn0Domain];
       local {
         ssyn0[dom] += localCache[dom] ** 2;
-        const adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn0)));
-        syn0[dom] += localCache[dom] * adaAlpha[dom.dim(2)];
+        adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn0)));
+        syn0[dom] += localCache[dom] * zAdaAlpha[dom];
       }
     }
     if (hs) then {
       localCache[syn1Domain] = latest.syn1[syn1Domain];
       local {
         ssyn1[dom] += localCache[dom] ** 2;
-        const adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn1)));
-        syn1[dom] += localCache[dom] * adaAlpha[dom.dim(2)];
+        adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn1)));
+        syn1[dom] += localCache[dom] * zAdaAlpha[dom];
       }
     }
     if (negative) then {
       localCache[syn1negDomain] = latest.syn1neg[syn1negDomain];
       local {
         ssyn1neg[dom] += localCache[dom] ** 2;
-        const adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn1neg)));
-        syn1neg[dom] += localCache[dom] * adaAlpha[dom.dim(2)];
+        adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn1neg)));
+        syn1neg[dom] += localCache[dom] * zAdaAlpha[dom];
       }
     }
   }
