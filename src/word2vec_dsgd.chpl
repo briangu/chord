@@ -572,7 +572,7 @@ class ModelTaskContext {
   }
 
   proc isDone(): bool {
-    return current_iteration > total_iterations;
+    return current_iteration >= total_iterations;
   }
 
   proc startStats() {
@@ -589,6 +589,7 @@ class ModelTaskContext {
   }
 
   proc summarize() {
+    writeln();
     writeln(id, " ", tid);
     writeln("\t fileChunkSize ", fileChunkSize);
     writeln("\t taskFileChunkSize ", taskFileChunkSize);

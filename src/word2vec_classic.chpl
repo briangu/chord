@@ -799,5 +799,6 @@ proc main() {
   }
   TrainModel();
 
+  writeln();
   writeln(" loopCounts ", networkContextLoopCounts);
 }
