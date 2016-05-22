@@ -571,7 +571,7 @@ class ModelTaskContext {
   }
 
   proc isDone(): bool {
-    return current_iteration > total_iterations;
+    return current_iteration >= total_iterations;
   }
 
   proc startStats() {
