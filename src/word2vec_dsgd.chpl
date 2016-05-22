@@ -1043,34 +1043,34 @@ proc TrainModel() {
 
     while (!mtc.isDone()) {
       mtc.resumeStats();
-      startVdebug("network");
+      /*startVdebug("network");*/
       forall tid in 0..#num_threads {
         networkArr[workerId].TrainModelThread(taskContexts[workerId][tid]);
       }
-      stopVdebug();
+      /*stopVdebug();*/
       mtc.pauseStats();
 
       var locale_word_count = (+ reduce taskContexts[workerId][0..#num_threads].last_word_count);
       /*info(taskContexts[workerId][0].last_word_count, ' ', locale_word_count, ' ', networkArr[workerId].max_locale_words);*/
       reportStats(mtc.statsTimer, locale_word_count, networkArr[workerId].max_locale_words, networkArr[workerId].alpha);
 
-      startVdebug("update");
+      /*startVdebug("update");*/
       for rid in 0..#num_param_locales {
         const subDomainStart = (rid * domSliceSize):int;
         const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart..#domSliceSize};
         networkArr[workerId].computeGradient(referenceNetworkArr[workerId]);
         on referenceNetworkArr[rid] do referenceNetworkArr[rid].update(networkArr[workerId], subSyn0Domain, workerId, locale_word_count);
       }
-      stopVdebug();
+      /*stopVdebug();*/
 
-      startVdebug("copy");
+      /*startVdebug("copy");*/
       for rid in 0..#num_param_locales {
         const subDomainStart = (rid * domSliceSize):int;
         const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart..#domSliceSize};
         networkArr[workerId].copy(referenceNetworkArr[rid], subSyn0Domain);
       }
       referenceNetworkArr[workerId].copy(networkArr[workerId], networkArr[workerId].syn0Domain);
-      stopVdebug();
+      /*stopVdebug();*/
 
       if ((workerId == computeLocalesStart) && (save_interval > 0) && (mtc.current_iteration % save_interval == 0)) then on referenceNetwork {
         info("collecting intermediate results");
