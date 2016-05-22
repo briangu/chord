@@ -682,6 +682,7 @@ proc TrainModelThread(tf: string, id: int) {
   t.stop();
   reader.close();
   trainFile.close();
+  writeln("word_count: ", word_count, " last_word_count ", last_word_count);
 }
 
 proc TrainModel() {
