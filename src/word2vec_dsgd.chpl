@@ -4,7 +4,7 @@
 
 use BlockDist, Logging, Time, PrivateDist, VisualDebug;
 
-type elemType = real(64);
+type elemType = real(32);
 
 const MAX_STRING = 100;
 const EXP_TABLE_SIZE = 1000;
@@ -47,11 +47,11 @@ const CRLF = ascii('\n'): uint(8);
 const layer1_size = size;
 
 var ssyn0Domain: domain(2);
-var ssyn0: [ssyn0Domain] real;
+var ssyn0: [ssyn0Domain] elemType;
 var ssyn1Domain: domain(2);
-var ssyn1: [ssyn1Domain] real;
+var ssyn1: [ssyn1Domain] elemType;
 var ssyn1degDomain: domain(2);
-var ssyn1neg: [ssyn1degDomain] real;
+var ssyn1neg: [ssyn1degDomain] elemType;
 
 writeln("num_threads = ", num_threads);
 writeln("numLocales = ", numLocales);
@@ -79,7 +79,7 @@ proc reportStats(statsTimer, locale_word_count, max_locale_words, alpha) {
 record VocabEntry {
   var len: int;
   var word: [0..#MAX_STRING] uint(8);
-  var cn: int(64);
+  var cn: int;
 };
 
 record VocabTreeEntry {
@@ -360,14 +360,14 @@ class VocabContext {
   }
 
   proc CreateBinaryTree() {
-    var b, i, min1i, min2i, pos1, pos2: int(64);
-    var point: [0..#MAX_CODE_LENGTH] int(64);
+    var b, i, min1i, min2i, pos1, pos2: int;
+    var point: [0..#MAX_CODE_LENGTH] int;
     var code: [0..#MAX_CODE_LENGTH] uint(8);
     var dom = {0..#(vocab_size*2 + 1)};
-    var count: [dom] int(64);
-    var binary: [dom] int(64);
-    var parent_node: [dom] int(64);
-    count = 1e15: int(64);
+    var count: [dom] int;
+    var binary: [dom] int;
+    var parent_node: [dom] int;
+    count = 1e15: int;
     for a in 0..#vocab_size do count[a] = vocab[a].cn;
     pos1 = vocab_size - 1;
     pos2 = vocab_size;
@@ -435,7 +435,7 @@ class VocabContext {
   }
 
   proc ReadVocab(read_vocab_file) {
-    var a: int(64);
+    var a: int;
     var cn: int;
     var c: uint(8);
     var word: [0..#MAX_STRING] uint(8);
@@ -477,7 +477,7 @@ class VocabContext {
 
   proc LearnVocabFromTrainFile(train_file) {
     var word: [0..#MAX_STRING] uint(8);
-    var i: int(64);
+    var i: int;
     var len: int;
     for a in 0..#vocab_hash_size do vocab_hash[a] = -1;
     var f = open(train_file, iomode.r);
@@ -543,9 +543,9 @@ class ModelTaskContext {
   var tid: int;
   var total_iterations: int;
   var current_iteration: int;
-  var next_random: uint(64) = tid: uint(64);
-  var word_count: uint(64);
-  var last_word_count: uint(64);
+  var next_random: uint = tid: uint;
+  var word_count: uint;
+  var last_word_count: uint;
   var trainFile = open(trainFileName, iomode.r);
   const fileChunkSize = trainFile.length() / numComputeLocales;
   const taskFileChunkSize = fileChunkSize / num_threads;
@@ -623,10 +623,10 @@ class NetworkContext {
   }
 
   proc RandomizeNetwork() {
-    var next_random: uint(64) = 1;
+    var next_random: uint = 1;
     for a in 0..#vocab_size {
       for b in LayerSpace {
-        next_random = next_random * 25214903917:uint(64) + 11;
+        next_random = next_random * 25214903917:uint + 11;
         syn0[0,a * layer1_size + b] = ((((next_random & 0xFFFF) / 65536:elemType) - 0.5) / layer1_size):elemType;
       }
     }
@@ -684,7 +684,7 @@ class NetworkContext {
       localCache[syn0Domain] = latest.syn0[syn0Domain];
       local {
         ssyn0[dom] += localCache[dom] ** 2;
-        const adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn0)));
+        const adaAlpha = (1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn0)))):elemType;
         syn0[dom] += localCache[dom] * adaAlpha[dom.dim(2)];
       }
     }
@@ -692,7 +692,7 @@ class NetworkContext {
       localCache[syn1Domain] = latest.syn1[syn1Domain];
       local {
         ssyn1[dom] += localCache[dom] ** 2;
-        const adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn1)));
+        const adaAlpha = (1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn1)))):elemType;
         syn1[dom] += localCache[dom] * adaAlpha[dom.dim(2)];
       }
     }
@@ -700,16 +700,16 @@ class NetworkContext {
       localCache[syn1negDomain] = latest.syn1neg[syn1negDomain];
       local {
         ssyn1neg[dom] += localCache[dom] ** 2;
-        const adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn1neg)));
+        const adaAlpha = (1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn1neg)))):elemType;
         syn1neg[dom] += localCache[dom] * adaAlpha[dom.dim(2)];
       }
     }
   }
 
   proc TrainModelThread(mt: ModelTaskContext) {
-    var a, b, d, cw, word, last_word, sentence_length, sentence_position: int(64);
+    var a, b, d, cw, word, last_word, sentence_length, sentence_position: int;
     var sen: [0..#(MAX_SENTENCE_LENGTH + 1)] int;
-    var l1, l2, c, target, labelx: int(64);
+    var l1, l2, c, target, labelx: int;
     var f, g: real;
     var atEOF = false;
 
@@ -735,7 +735,7 @@ class NetworkContext {
           // The subsampling randomly discards frequent words while keeping the ranking same
           if (sample > 0) {
             var ran = (sqrt(vocabContext.vocab[word].cn / (sample * train_words):real) + 1) * (sample * vocabContext.train_words):real / vocabContext.vocab[word].cn;
-            mt.next_random = (mt.next_random * 25214903917:uint(64) + 11):uint(64);
+            mt.next_random = (mt.next_random * 25214903917:uint + 11):uint;
             if (ran < (mt.next_random & 0xFFFF):real / 65536:real) then continue;
           }
           sen[sentence_length] = word;
@@ -755,8 +755,8 @@ class NetworkContext {
         neu1[c] = 0:elemType;
         neu1e[c] = 0:elemType;
       }
-      mt.next_random = (mt.next_random * 25214903917:uint(64) + 11):uint(64);
-      b = (mt.next_random % window: uint(64)):int(64);
+      mt.next_random = (mt.next_random * 25214903917:uint + 11):uint;
+      b = (mt.next_random % window: uint):int;
       if (cbow) {  //train the cbow architecture
         // in -> hidden
         cw = 0;
@@ -792,9 +792,9 @@ class NetworkContext {
               target = word;
               labelx = 1;
             } else {
-              mt.next_random = (mt.next_random * 25214903917:uint(64) + 11):uint(64);
-              target = vocabContext.table[((mt.next_random >> 16) % vocabContext.table_size:uint(64)):int];
-              if (target == 0) then target = (mt.next_random % (vocab_size - 1):uint(64) + 1):int;
+              mt.next_random = (mt.next_random * 25214903917:uint + 11):uint;
+              target = vocabContext.table[((mt.next_random >> 16) % vocabContext.table_size:uint):int];
+              if (target == 0) then target = (mt.next_random % (vocab_size - 1):uint + 1):int;
               if (target == word) then continue;
               labelx = 0;
             }
@@ -848,9 +848,9 @@ class NetworkContext {
               target = word;
               labelx = 1;
             } else {
-              mt.next_random = (mt.next_random * 25214903917:uint(64) + 11):uint(64);
-              target = vocabContext.table[((mt.next_random >> 16) % vocabContext.table_size:uint(64)):int];
-              if (target == 0) then target = (mt.next_random % (vocab_size - 1):uint(64) + 1):int;
+              mt.next_random = (mt.next_random * 25214903917:uint + 11):uint;
+              target = vocabContext.table[((mt.next_random >> 16) % vocabContext.table_size:uint):int];
+              if (target == 0) then target = (mt.next_random % (vocab_size - 1):uint + 1):int;
               if (target == word) then continue;
               labelx = 0;
             }
