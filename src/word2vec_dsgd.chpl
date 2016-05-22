@@ -702,29 +702,34 @@ class NetworkContext {
     if (syn0Domain.low > dom.low) then halt("syn0Domain.low > dom.low ", syn0Domain);
     if (syn0Domain.high < dom.high) then halt("syn0Domain.high < dom.high ", syn0Domain);
 
+    var adaAlpha: [{dom.dim(1), remdom.dim(2).translate(1)}] elemType;
+    var zAdaAlpha: [dom] => adaAlpha;
+
+    writeln(adaAlpha.domain);
+
     {
       // speed up the local operations by first coping the entire array over the the current local before we do math
       localCache[syn0Domain] = latest.syn0[syn0Domain];
       local {
         ssyn0[dom] += localCache[dom] ** 2;
-        const adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn0)));
-        syn0[dom] += localCache[dom] * adaAlpha[dom.dim(2)];
+        adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn0)));
+        syn0[dom] += localCache[dom] * zAdaAlpha[dom];
       }
     }
     if (hs) then {
       localCache[syn1Domain] = latest.syn1[syn1Domain];
       local {
         ssyn1[dom] += localCache[dom] ** 2;
-        const adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn1)));
-        syn1[dom] += localCache[dom] * adaAlpha[dom.dim(2)];
+        adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn1)));
+        syn1[dom] += localCache[dom] * zAdaAlpha[dom];
       }
     }
     if (negative) then {
       localCache[syn1negDomain] = latest.syn1neg[syn1negDomain];
       local {
         ssyn1neg[dom] += localCache[dom] ** 2;
-        const adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn1neg)));
-        syn1neg[dom] += localCache[dom] * adaAlpha[dom.dim(2)];
+        adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn1neg)));
+        syn1neg[dom] += localCache[dom] * zAdaAlpha[dom];
       }
     }
   }
@@ -1040,6 +1045,7 @@ proc TrainModel() {
   }
 
   const domSliceSize:int = ((network.vocab_size * layer1_size) / num_param_locales: real): int;
+  writeln("domSliceSize: ",domSliceSize);
 
   // run on a single locale using all threads available
   coforall loc in computeLocales do on loc {
@@ -1065,20 +1071,24 @@ proc TrainModel() {
       reportStats(mtc.computeStatsTimer.statsTimer, locale_word_count, networkArr[workerId].max_locale_words, networkArr[workerId].alpha);
 
       mtc.updateStatsTimer.resumeStats();
+      info("updating");
 
       /*startVdebug("update");*/
       for rid in 0..#num_param_locales {
         const subDomainStart = (rid * domSliceSize):int;
         const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart..#domSliceSize};
+        info("subSyn0Domain: ", subSyn0Domain);
         networkArr[workerId].computeGradient(referenceNetworkArr[workerId]);
         on referenceNetworkArr[rid] do referenceNetworkArr[rid].update(networkArr[workerId], subSyn0Domain, workerId, locale_word_count);
       }
       /*stopVdebug();*/
 
+      info("copying");
       /*startVdebug("copy");*/
       for rid in 0..#num_param_locales {
         const subDomainStart = (rid * domSliceSize):int;
         const subSyn0Domain = {network.syn0Domain.dim(1), subDomainStart..#domSliceSize};
+        info("subSyn0Domain: ", subSyn0Domain);
         networkArr[workerId].copy(referenceNetworkArr[rid], subSyn0Domain);
       }
       referenceNetworkArr[workerId].copy(networkArr[workerId], networkArr[workerId].syn0Domain);
