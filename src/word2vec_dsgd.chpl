@@ -687,7 +687,7 @@ class NetworkContext {
       localCache[syn0Domain] = latest.syn0[syn0Domain];
       local {
         ssyn0[dom] += localCache[dom] ** 2;
-        adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn0)));
+        adaAlpha = (1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn0)))):elemType;
         syn0[dom] += localCache[dom] * zAdaAlpha[dom];
       }
     }
@@ -695,7 +695,7 @@ class NetworkContext {
       localCache[syn1Domain] = latest.syn1[syn1Domain];
       local {
         ssyn1[dom] += localCache[dom] ** 2;
-        adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn1)));
+        adaAlpha = (1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn1)))):elemType;
         syn1[dom] += localCache[dom] * zAdaAlpha[dom];
       }
     }
@@ -703,7 +703,7 @@ class NetworkContext {
       localCache[syn1negDomain] = latest.syn1neg[syn1negDomain];
       local {
         ssyn1neg[dom] += localCache[dom] ** 2;
-        adaAlpha = 1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn1neg)));
+        adaAlpha = (1.0 / ((1.0 / update_alpha) * (update_delta + sqrt(ssyn1neg)))):elemType;
         syn1neg[dom] += localCache[dom] * zAdaAlpha[dom];
       }
     }
