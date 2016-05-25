@@ -39,6 +39,7 @@ config const num_param_locales = 1;
 config const save_interval = 0;
 config const update_alpha = 0.1;
 config const update_delta = 0.1;
+config const override_train_words = 0;
 
 const SPACE = ascii(' '): uint(8);
 const TAB = ascii('\t'): uint(8);
@@ -459,6 +460,11 @@ class VocabContext {
 
     r.close();
     f.close();
+
+    if (override_train_words > 0) {
+      writeln("overriding train words with ", override_train_words);
+      train_words = override_train_words;
+    }
 
     // NOTE: we don't SortVocab here because the vocab is already sorted when read
     if (debug_mode > 0) {
