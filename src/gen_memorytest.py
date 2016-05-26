@@ -90,6 +90,7 @@ stopSection()
 def localRemoteCommonCopyTests():
     c("localMemory.arr = remoteMemory.arr")
     c("localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]")
+    # c("for (a,b) in zip(localMemory.arr, remoteMemory.arr) do a = b")
     # too slow to use
     # c("[i in localMemory.dom] localMemory.arr[i] = remoteMemory.arr[i]")
     # c("coforall loc in Locales[0..0] do on loc do [i in localMemory.dom] localMemory.arr[i] = remoteMemory.arr[i]")
@@ -98,6 +99,8 @@ def localRemoteCommonCopyTests():
     c("coforall loc in Locales[1..1] do on loc do localMemory.arr = remoteMemory.arr")
     c("coforall loc in Locales[0..0] do on loc do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]")
     c("coforall loc in Locales[1..1] do on loc do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]")
+    # c("coforall loc in Locales[0..0] do on loc do for (a,b) in zip(localMemory.arr, remoteMemory.arr) do a = b")
+    # c("coforall loc in Locales[1..1] do on loc do for (a,b) in zip(localMemory.arr, remoteMemory.arr) do a = b")
 
 startSection("local/remote class arr copy tests")
 x("const dom = {0..#(n*1024*1024)}")
