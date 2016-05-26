@@ -155,7 +155,6 @@ coforall loc in Locales[1..1] do on loc do  localMemory2.arr[localMemory2.dom] =
 timer.stop();
 writeln("coforall loc in Locales[1..1] do on loc do  localMemory2.arr[localMemory2.dom] = remoteMemory2.arr[localMemory2.dom]: ", timer.elapsed(TimeUnits.microseconds));
 
-//
 writeln("***********************");
 writeln("memory assignment tests");
 writeln("***********************");
@@ -209,3 +208,72 @@ coforall loc in Locales[0..0] do on loc {
 }
 timer.stop();
 writeln("coforall loc in Locales[0..0] do on loc: ", timer.elapsed(TimeUnits.microseconds));
+
+writeln("***********************");
+writeln("dmapped tests");
+writeln("***********************");
+
+var syn0Domain = {0..#numLocales, 0..1024};
+const syn0DomainSpace = syn0Domain dmapped Block(boundingBox=syn0Domain);
+var syn0: [syn0DomainSpace] elemType;
+forall s in syn0 do s = here.id: elemType;
+/*writeln(syn0);*/
+
+timer.clear();
+timer.start();
+syn0[0,..] = syn0[1,..];
+timer.stop();
+writeln("syn0[0,..] = syn0[1,..]: ", timer.elapsed(TimeUnits.microseconds));
+
+timer.clear();
+timer.start();
+syn0[0,syn0Domain.dim(2)] = syn0[1,syn0Domain.dim(2)];
+timer.stop();
+writeln("syn0[0,syn0Domain.dim(2)] = syn0[1,syn0Domain.dim(2)]: ", timer.elapsed(TimeUnits.microseconds));
+
+timer.clear();
+timer.start();
+forall i in syn0Domain.dim(2) do syn0[0,i] = syn0[1,i];
+timer.stop();
+writeln("forall i in syn0Domain.dim(2) do syn0[0,i] = syn0[1,i]: ", timer.elapsed(TimeUnits.microseconds));
+
+timer.clear();
+timer.start();
+coforall loc in Locales[0..0] do on loc do forall i in syn0Domain.dim(2) do syn0[0,i] = syn0[1,i];
+timer.stop();
+writeln("coforall loc on Locales[0..0] do on loc do forall i in syn0Domain.dim(2) do syn0[0,i] = syn0[1,i]: ", timer.elapsed(TimeUnits.microseconds));
+
+timer.clear();
+timer.start();
+coforall loc in Locales[1..1] do on loc do forall i in syn0Domain.dim(2) do syn0[0,i] = syn0[1,i];
+timer.stop();
+writeln("coforall loc on Locales[1..1] do on loc do forall i in syn0Domain.dim(2) do syn0[0,i] = syn0[1,i]: ", timer.elapsed(TimeUnits.microseconds));
+
+/*const Space = {0..#1, 0..#n};
+const Foo = Space dmapped DimensionalDist2D(targetLocales, new ReplicatedDim(numLocales=1), new BlockDim(numLocales=1, boundingBox = 0..#n));*/
+/*const Foo = Space dmapped DimensionalDist2D(targetLocales, new ReplicatedDim(numLocales=1), new BlockCyclicDim(1, lowIdx=0, n));*/
+/*var replB: [Foo] elemType;*/
+
+/*for loc in targetLocales do on loc {
+  forall a in replB do
+    a = here.id: elemType;
+  writeln("On ", here, ":");
+  const Helper: [Space] elemType = replB;
+  writeln(Helper);
+  writeln();
+}*/
+
+/*info("here2");*/
+/*coforall dest in targetLocales[.., 0] do
+  on dest do
+    replB = syn0[1..1, ..];*/
+
+/*replB = syn0[1..1,..];*/
+/*forall (a,b) in zip(replB, syn0[1..1,..]) do a += b;*/
+/*writeln(syn0);
+writeln();*/
+/*forall (a,b) in zip(replB, syn0[1..1,..]) do b = a;*/
+/*forall (a,b) in zip(syn0[0..0,..], syn0[1..1,..]) do a += b;*/
+/*syn0[0..0,..] += syn0[1..1,..];*/
+/*writeln(syn0);*/
+/*info(replB[0,0]);*/

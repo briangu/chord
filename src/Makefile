@@ -12,11 +12,8 @@ word2vec_dsgd: word2vec_dsgd.chpl
 word2vec_classic: word2vec_classic.chpl
 	chpl --print-passes --fast --local -o ../bin/word2vec word2vec_classic.chpl
 
-copytest: copytest.chpl
-	chpl --print-passes --fast -o ../bin/copytest copytest.chpl
-
-nettest: nettest.chpl
-	chpl --print-passes --fast -o ../bin/nettest nettest.chpl
+memorytest: memorytest.chpl
+	chpl --print-passes --fast -o ../bin/memorytest memorytest.chpl
 
 clean:
 	rm -f bin/*
