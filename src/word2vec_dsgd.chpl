@@ -600,25 +600,25 @@ class NetworkContext {
   const train_words = vocabContext.train_words;
   const max_locale_words = (train_words * iterations) / numComputeLocales;
 
-  var ssyn0Domain: domain(2);
+  var ssyn0Domain: domain(1);
   var ssyn0: [ssyn0Domain] real;
-  var ssyn1Domain: domain(2);
+  var ssyn1Domain: domain(1);
   var ssyn1: [ssyn1Domain] real;
-  var ssyn1degDomain: domain(2);
+  var ssyn1degDomain: domain(1);
   var ssyn1neg: [ssyn1degDomain] real;
 
-  const syn0Domain = {0..#1,0..#(vocab_size*layer1_size)};
+  const syn0Domain = {0..#(vocab_size*layer1_size)};
   var syn0: [syn0Domain] elemType;
-  const syn1Domain = if (hs) then syn0Domain else {0..#1,0..#1};
+  const syn1Domain = if (hs) then syn0Domain else {0..#1};
   var syn1: [syn1Domain] elemType;
-  const syn1negDomain = if (negative) then syn0Domain else {0..#1,0..#1};
+  const syn1negDomain = if (negative) then syn0Domain else {0..#1};
   var syn1neg: [syn1negDomain] elemType;
 
   var expTable: [0..#(EXP_TABLE_SIZE+1)] real;
 
   const LayerSpace = {0..#layer1_size};
 
-  var localCacheDomain: domain(2) = syn0Domain;
+  var localCacheDomain = syn0Domain;
   var localCache: [localCacheDomain] elemType;
 
   proc InitExpTable() {
@@ -633,7 +633,7 @@ class NetworkContext {
     for a in 0..#vocab_size {
       for b in LayerSpace {
         next_random = next_random * 25214903917:uint(64) + 11;
-        syn0[0,a * layer1_size + b] = ((((next_random & 0xFFFF) / 65536:elemType) - 0.5) / layer1_size):elemType;
+        syn0[a * layer1_size + b] = ((((next_random & 0xFFFF) / 65536:elemType) - 0.5) / layer1_size):elemType;
       }
     }
   }
@@ -649,7 +649,7 @@ class NetworkContext {
   }
 
   proc copy(networkContext: NetworkContext, remdom) {
-    const dom = {remdom.dim(1), remdom.dim(2)};
+    const dom = {remdom.dim(1)};
 
     localCache[syn0Domain] = networkContext.syn0[syn0Domain];
     local this.syn0[dom] = localCache[dom];
@@ -678,18 +678,18 @@ class NetworkContext {
   }
 
   proc update(latest: NetworkContext, remdom, id, locale_word_count) {
-    const dom = {remdom.dim(1), remdom.dim(2)};
+    const dom = {remdom.dim(1)};
 
     if (localCacheDomain.low > dom.low) then halt("localCacheDomain.low > dom.low", localCacheDomain);
     if (localCacheDomain.high < dom.high) then halt("localCacheDomain.high < dom.high ", localCacheDomain);
     if (syn0Domain.low > dom.low) then halt("syn0Domain.low > dom.low ", syn0Domain);
     if (syn0Domain.high < dom.high) then halt("syn0Domain.high < dom.high ", syn0Domain);
 
-    var adaAlpha: [{dom.dim(1), remdom.dim(2).translate(1)}] elemType;
+    var adaAlpha: [{remdom.dim(1).translate(1)}] elemType;
     var zAdaAlpha: [dom] => adaAlpha;
 
     {
-      // speed up the local operations by first coping the entire array over the the current local before we do math
+      // speed up the local operations by first copying the entire array over the the current local before we do math
       localCache[syn0Domain] = latest.syn0[syn0Domain];
       local {
         ssyn0[dom] += localCache[dom] ** 2;
@@ -775,7 +775,7 @@ class NetworkContext {
           if (c >= sentence_length) then continue;
           last_word = sen[c];
           if (last_word == -1) then continue;
-          for c in LayerSpace do neu1[c] += syn0[0,c + last_word * layer1_size];
+          for c in LayerSpace do neu1[c] += syn0[c + last_word * layer1_size];
           cw += 1;
         }
         if (cw) {
@@ -784,16 +784,16 @@ class NetworkContext {
             f = 0;
             l2 = vocabContext.vocab_tree[word].point[d] * layer1_size;
             // Propagate hidden -> output
-            for c in LayerSpace do f += neu1[c] * syn1[0,c + l2];
+            for c in LayerSpace do f += neu1[c] * syn1[c + l2];
             if (f <= -MAX_EXP) then continue;
             else if (f >= MAX_EXP) then continue;
             else f = expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int];
             // 'g' is the gradient multiplied by the learning rate
             g = (1 - vocabContext.vocab_tree[word].code[d] - f) * alpha;
             // Propagate errors output -> hidden
-            for c in LayerSpace do neu1e[c] += (g * syn1[0,c + l2]):elemType;
+            for c in LayerSpace do neu1e[c] += (g * syn1[c + l2]):elemType;
             // Learn weights hidden -> output
-            for c in LayerSpace do syn1[0,c + l2] += (g * neu1[c]):elemType;
+            for c in LayerSpace do syn1[c + l2] += (g * neu1[c]):elemType;
           }
           // NEGATIVE SAMPLING
           if (negative > 0) then for d in 0..#(negative + 1) {
@@ -809,12 +809,12 @@ class NetworkContext {
             }
             l2 = target * layer1_size;
             f = 0;
-            for c in LayerSpace do f += neu1[c] * syn1neg[0,c + l2];
+            for c in LayerSpace do f += neu1[c] * syn1neg[c + l2];
             if (f > MAX_EXP) then g = (labelx - 1) * alpha;
             else if (f < -MAX_EXP) then g = (labelx - 0) * alpha;
             else g = (labelx - expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int]) * alpha;
-            for c in LayerSpace do neu1e[c] += (g * syn1neg[0,c + l2]):elemType;
-            for c in LayerSpace do syn1neg[0,c + l2] += (g * neu1[c]):elemType;
+            for c in LayerSpace do neu1e[c] += (g * syn1neg[c + l2]):elemType;
+            for c in LayerSpace do syn1neg[c + l2] += (g * neu1[c]):elemType;
           }
           // hidden -> in
           for a in b..(window * 2 - b) do if (a != window) {
@@ -823,7 +823,7 @@ class NetworkContext {
             if (c >= sentence_length) then continue;
             last_word = sen[c];
             if (last_word == -1) then continue;
-            for c in LayerSpace do syn0[0,c + last_word * layer1_size] += neu1e[c];
+            for c in LayerSpace do syn0[c + last_word * layer1_size] += neu1e[c];
           }
         }
       } else {  //train skip-gram
@@ -840,16 +840,16 @@ class NetworkContext {
             f = 0;
             l2 = vocabContext.vocab_tree[word].point[d] * layer1_size;
             // Propagate hidden -> output
-            for c in LayerSpace do f += syn0[0,c + l1] * syn1[0,c + l2];
+            for c in LayerSpace do f += syn0[c + l1] * syn1[c + l2];
             if (f <= -MAX_EXP) then continue;
             else if (f >= MAX_EXP) then continue;
             else f = expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int];
             // 'g' is the gradient multiplied by the learning rate
             g = (1 - vocabContext.vocab_tree[word].code[d] - f) * alpha;
             // Propagate errors output -> hidden
-            for c in LayerSpace do neu1e[c] += (g * syn1[0,c + l2]):elemType;
+            for c in LayerSpace do neu1e[c] += (g * syn1[c + l2]):elemType;
             // Learn weights hidden -> output
-            for c in LayerSpace do syn1[0,c + l2] += (g * syn0[0,c + l1]):elemType;
+            for c in LayerSpace do syn1[c + l2] += (g * syn0[c + l1]):elemType;
           }
           // NEGATIVE SAMPLING
           if (negative > 0) then for d in 0..#negative {
@@ -865,15 +865,15 @@ class NetworkContext {
             }
             l2 = target * layer1_size;
             f = 0;
-            for c in LayerSpace do f += syn0[0,c + l1] * syn1neg[0,c + l2];
+            for c in LayerSpace do f += syn0[c + l1] * syn1neg[c + l2];
             if (f > MAX_EXP) then g = (labelx - 1) * alpha;
             else if (f < -MAX_EXP) then g = (labelx - 0) * alpha;
             else g = (labelx - expTable[((f + MAX_EXP) * (EXP_TABLE_SIZE / MAX_EXP / 2)):int]) * alpha;
-            for c in LayerSpace do neu1e[c] += (g * syn1neg[0,c + l2]):elemType;
-            for c in LayerSpace do syn1neg[0,c + l2] += (g * syn0[0,c + l1]):elemType;
+            for c in LayerSpace do neu1e[c] += (g * syn1neg[c + l2]):elemType;
+            for c in LayerSpace do syn1neg[c + l2] += (g * syn0[c + l1]):elemType;
           }
           // Learn weights input -> hidden
-          for c in LayerSpace do syn0[0,c + l1] += neu1e[c];
+          for c in LayerSpace do syn0[c + l1] += neu1e[c];
         }
       }
       sentence_position += 1;
@@ -899,8 +899,8 @@ proc writeResults(output_file: string, network: NetworkContext) {
       writer.writef("%c", vocabContext.vocab[a].word[j]);
     }
     writer.write(" ");
-    if (binary) then for b in LayerSpace do writer.writef("%|4r", network.syn0[0,a * layer1_size + b]);
-    else for b in LayerSpace do writer.write(network.syn0[0,a * layer1_size + b], " ");
+    if (binary) then for b in LayerSpace do writer.writef("%|4r", network.syn0[a * layer1_size + b]);
+    else for b in LayerSpace do writer.write(network.syn0[a * layer1_size + b], " ");
     writer.writeln();
   }
 
@@ -930,7 +930,7 @@ proc runKMeans(output_file: string, network: NetworkContext, classes: int) {
     for b in 0..#(clcn * layer1_size) do cent[b] = 0;
     for b in 0..#clcn do centcn[b] = 1;
     for c in 0..#vocabContext.vocab_size {
-      for d in LayerSpace do cent[layer1_size * cl[c] + d] += network.syn0[0,c * layer1_size + d];
+      for d in LayerSpace do cent[layer1_size * cl[c] + d] += network.syn0[c * layer1_size + d];
       centcn[cl[c]] += 1;
     }
     for b in 0..#clcn {
@@ -947,7 +947,7 @@ proc runKMeans(output_file: string, network: NetworkContext, classes: int) {
       closeid = 0;
       for d in 0..#clcn {
         x = 0;
-        for b in LayerSpace do x += cent[layer1_size * d + b] * network.syn0[0,c * layer1_size + b];
+        for b in LayerSpace do x += cent[layer1_size * d + b] * network.syn0[c * layer1_size + b];
         if (x > closev) {
           closev = x;
           closeid = d;
