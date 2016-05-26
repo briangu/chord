@@ -13,6 +13,7 @@ word2vec_classic: word2vec_classic.chpl
 	chpl --print-passes --fast --local -o ../bin/word2vec word2vec_classic.chpl
 
 memorytest: memorytest.chpl
+	python gen_memorytest.py > memorytest.chpl
 	chpl --print-passes --fast -o ../bin/memorytest memorytest.chpl
 
 clean:

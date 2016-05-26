@@ -1,12 +1,7 @@
-use BlockCycDim;
-use BlockDim;
 use BlockDist;
-use CyclicDist;
-use DimensionalDist2D;
 use Logging;
 use PrivateDist;
-use ReplicatedDist;
-use ReplicatedDim;
+use DimensionalDist2D, BlockDim, BlockCycDim, ReplicatedDim;
 use Time;
 
 type elemType = real;
@@ -15,265 +10,508 @@ config const n = 16;
 config const k = 1;
 config const num_threads = here.maxTaskPar;
 
-const dom = {0..#(n*1024*1024)};
-var priv_arr: [PrivateSpace][dom] elemType;
-var local_arr: [dom] elemType;
-
-const dom2 = {0..#k,0..#(n*1024*1024)};
-var priv_arr2: [PrivateSpace][dom2] elemType;
-var local_arr2: [dom] elemType;
-
-class RemoteMemory {
-  var n: int;
-  var dom = {0..#n};
-  var arr: [dom] elemType;
-}
-
-class RemoteMemory2 {
-  var m: int;
-  var n: int;
-  var dom = {0..#m, 0..#n};
-  var arr: [dom] elemType;
-}
-
 var timer: Timer;
 
-writeln("***********************");
-writeln("cross-locale memory copy tests");
-writeln("***********************");
+writeln("**");
+writeln("** PrivateSpace copy tests");
+writeln("**");
 
-timer.clear();
-timer.start();
-priv_arr[0] = priv_arr[1];
-timer.stop();
-writeln("priv_arr[0] = priv_arr[1]: ", timer.elapsed(TimeUnits.microseconds));
+{
 
-timer.clear();
-timer.start();
-priv_arr[0][dom] = priv_arr[1][dom];
-timer.stop();
-writeln("priv_arr[0][dom] = priv_arr[1][dom]: ", timer.elapsed(TimeUnits.microseconds));
+  const dom = {0..#(n*1024*1024)};
+  var arr: [PrivateSpace][dom] elemType;
 
-timer.clear();
-timer.start();
-priv_arr2[0] = priv_arr2[1];
-timer.stop();
-writeln("priv_arr2[0] = priv_arr2[1]: ", timer.elapsed(TimeUnits.microseconds));
+  timer.clear();
+  timer.start();
+  arr[0] = arr[1];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tarr[0] = arr[1]");;
 
-timer.clear();
-timer.start();
-priv_arr2[0][dom2] = priv_arr2[1][dom2];
-timer.stop();
-writeln("priv_arr2[0][dom2] = priv_arr2[1][dom2]: ", timer.elapsed(TimeUnits.microseconds));
+  timer.clear();
+  timer.start();
+  arr[0][dom] = arr[1][dom];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tarr[0][dom] = arr[1][dom]");;
 
-var localMemory = new RemoteMemory(dom.high);
-var remoteMemory: RemoteMemory;
-on Locales[1] do remoteMemory = new RemoteMemory(dom.high);
-writeln("localMemory.locale.id: ", localMemory.locale.id, " remoteMemory.locale.id: ", remoteMemory.locale.id);
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do arr[0] = arr[1];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do arr[0] = arr[1]");;
 
-timer.clear();
-timer.start();
-localMemory.arr = remoteMemory.arr;
-timer.stop();
-writeln("localMemory.arr = remoteMemory.arr: ", timer.elapsed(TimeUnits.microseconds));
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[1..1] do on loc do arr[0] = arr[1];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[1..1] do on loc do arr[0] = arr[1]");;
 
-timer.clear();
-timer.start();
-localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom];
-timer.stop();
-writeln("localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]: ", timer.elapsed(TimeUnits.microseconds));
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do arr[0][dom] = arr[1][dom];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do arr[0][dom] = arr[1][dom]");;
 
-timer.clear();
-timer.start();
-coforall loc in Locales[0..0] do on loc do  localMemory.arr = remoteMemory.arr;
-timer.stop();
-writeln("coforall loc in Locales[0..0] do on loc do  localMemory.arr = remoteMemory.arr: ", timer.elapsed(TimeUnits.microseconds));
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[1..1] do on loc do arr[0][dom] = arr[1][dom];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[1..1] do on loc do arr[0][dom] = arr[1][dom]");;
 
-timer.clear();
-timer.start();
-coforall loc in Locales[1..1] do on loc do  localMemory.arr = remoteMemory.arr;
-timer.stop();
-writeln("coforall loc in Locales[1..1] do on loc do  localMemory.arr = remoteMemory.arr: ", timer.elapsed(TimeUnits.microseconds));
-
-timer.clear();
-timer.start();
-coforall loc in Locales[0..0] do on loc do  localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom];
-timer.stop();
-writeln("coforall loc in Locales[0..0] do on loc do  localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]: ", timer.elapsed(TimeUnits.microseconds));
-
-timer.clear();
-timer.start();
-coforall loc in Locales[1..1] do on loc do  localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom];
-timer.stop();
-writeln("coforall loc in Locales[1..1] do on loc do  localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]: ", timer.elapsed(TimeUnits.microseconds));
-
-// super slow
-/*timer.clear();
-timer.start();
-localMemory.arr[localMemory.dom] -= remoteMemory.arr[localMemory.dom];
-timer.stop();
-writeln("localMemory.arr[localMemory.dom] -= remoteMemory.arr[localMemory.dom]: ", timer.elapsed(TimeUnits.microseconds));*/
-
-var localMemory2 = new RemoteMemory2(1, dom.high);
-var remoteMemory2: RemoteMemory2;
-on Locales[1] do remoteMemory2 = new RemoteMemory2(1, dom.high);
-writeln("localMemory.locale.id: ", localMemory2.locale.id, " remoteMemory2.locale.id: ", remoteMemory.locale.id);
-
-timer.clear();
-timer.start();
-localMemory2.arr = remoteMemory2.arr;
-timer.stop();
-writeln("localMemory2.arr = remoteMemory2.arr: ", timer.elapsed(TimeUnits.microseconds));
-
-timer.clear();
-timer.start();
-localMemory2.arr[localMemory2.dom] = remoteMemory2.arr[localMemory2.dom];
-timer.stop();
-writeln("localMemory2.arr[localMemory2.dom] = remoteMemory2.arr[localMemory.dom]: ", timer.elapsed(TimeUnits.microseconds));
-
-timer.clear();
-timer.start();
-coforall loc in Locales[0..0] do on loc do  localMemory2.arr = remoteMemory2.arr;
-timer.stop();
-writeln("coforall loc in Locales[0..0] do on loc do  localMemory2.arr = remoteMemory2.arr: ", timer.elapsed(TimeUnits.microseconds));
-
-timer.clear();
-timer.start();
-coforall loc in Locales[1..1] do on loc do  localMemory2.arr = remoteMemory2.arr;
-timer.stop();
-writeln("coforall loc in Locales[1..1] do on loc do  localMemory2.arr = remoteMemory2.arr: ", timer.elapsed(TimeUnits.microseconds));
-
-timer.clear();
-timer.start();
-coforall loc in Locales[0..0] do on loc do  localMemory2.arr[localMemory2.dom] = remoteMemory2.arr[localMemory2.dom];
-timer.stop();
-writeln("coforall loc in Locales[0..0] do on loc do  localMemory2.arr[localMemory2.dom] = remoteMemory2.arr[localMemory2.dom]: ", timer.elapsed(TimeUnits.microseconds));
-
-timer.clear();
-timer.start();
-coforall loc in Locales[1..1] do on loc do  localMemory2.arr[localMemory2.dom] = remoteMemory2.arr[localMemory2.dom];
-timer.stop();
-writeln("coforall loc in Locales[1..1] do on loc do  localMemory2.arr[localMemory2.dom] = remoteMemory2.arr[localMemory2.dom]: ", timer.elapsed(TimeUnits.microseconds));
-
-writeln("***********************");
-writeln("memory assignment tests");
-writeln("***********************");
-
-timer.clear();
-timer.start();
-local_arr = 0;
-timer.stop();
-writeln("local_arr = 0 ", timer.elapsed(TimeUnits.microseconds));
-
-timer.clear();
-timer.start();
-for i in local_arr.domain do local_arr[i] = 0;
-timer.stop();
-writeln("for i in 0..local_arr.domain do local_arr[i] = 0: ", timer.elapsed(TimeUnits.microseconds));
-
-timer.clear();
-timer.start();
-forall i in local_arr.domain do local_arr[i] = 0;
-timer.stop();
-writeln("forall i in 0..local_arr.domain do local_arr[i] = 0: ", timer.elapsed(TimeUnits.microseconds));
-
-timer.clear();
-timer.start();
-forall n in 0..#num_threads do local_arr = 0;
-timer.stop();
-writeln("forall n in 0..#num_threads do local_arr = 0: ", timer.elapsed(TimeUnits.microseconds));
-
-timer.clear();
-timer.start();
-forall n in 0..#num_threads do forall i in local_arr.domain do local_arr[i] = 0;
-timer.stop();
-writeln("forall n in 0..#num_threads do forall i in local_arr.domain do local_arr[i] = 0: ", timer.elapsed(TimeUnits.microseconds));
-
-timer.clear();
-timer.start();
-forall n in 0..#num_threads do for i in local_arr.domain do local_arr[i] = 0;
-timer.stop();
-writeln("forall n in 0..#num_threads do for i in local_arr.domain do local_arr[i] = 0: ", timer.elapsed(TimeUnits.microseconds));
-
-timer.clear();
-timer.start();
-forall n in 0..#num_threads do for l in local_arr do l = 0;
-timer.stop();
-writeln("forall n in 0..#num_threads do for l in local_arr do l = 0: ", timer.elapsed(TimeUnits.microseconds));
-
-timer.clear();
-timer.start();
-coforall loc in Locales[0..0] do on loc {
-  forall n in 0..#num_threads do forall i in local_arr.domain do local_arr[i] = 0;
 }
-timer.stop();
-writeln("coforall loc in Locales[0..0] do on loc: ", timer.elapsed(TimeUnits.microseconds));
 
-writeln("***********************");
-writeln("dmapped tests");
-writeln("***********************");
+writeln("**");
+writeln("** PrivateSpace 2D copy tests");
+writeln("**");
 
-var syn0Domain = {0..#numLocales, 0..1024};
-const syn0DomainSpace = syn0Domain dmapped Block(boundingBox=syn0Domain);
-var syn0: [syn0DomainSpace] elemType;
-forall s in syn0 do s = here.id: elemType;
-/*writeln(syn0);*/
+{
 
-timer.clear();
-timer.start();
-syn0[0,..] = syn0[1,..];
-timer.stop();
-writeln("syn0[0,..] = syn0[1,..]: ", timer.elapsed(TimeUnits.microseconds));
+  const dom = {0..#k,0..#(n*1024*1024)};
+  var arr: [PrivateSpace][dom] elemType;
 
-timer.clear();
-timer.start();
-syn0[0,syn0Domain.dim(2)] = syn0[1,syn0Domain.dim(2)];
-timer.stop();
-writeln("syn0[0,syn0Domain.dim(2)] = syn0[1,syn0Domain.dim(2)]: ", timer.elapsed(TimeUnits.microseconds));
+  timer.clear();
+  timer.start();
+  arr[0] = arr[1];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tarr[0] = arr[1]");;
 
-timer.clear();
-timer.start();
-forall i in syn0Domain.dim(2) do syn0[0,i] = syn0[1,i];
-timer.stop();
-writeln("forall i in syn0Domain.dim(2) do syn0[0,i] = syn0[1,i]: ", timer.elapsed(TimeUnits.microseconds));
+  timer.clear();
+  timer.start();
+  arr[0][dom] = arr[1][dom];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tarr[0][dom] = arr[1][dom]");;
 
-timer.clear();
-timer.start();
-coforall loc in Locales[0..0] do on loc do forall i in syn0Domain.dim(2) do syn0[0,i] = syn0[1,i];
-timer.stop();
-writeln("coforall loc on Locales[0..0] do on loc do forall i in syn0Domain.dim(2) do syn0[0,i] = syn0[1,i]: ", timer.elapsed(TimeUnits.microseconds));
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do arr[0] = arr[1];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do arr[0] = arr[1]");;
 
-timer.clear();
-timer.start();
-coforall loc in Locales[1..1] do on loc do forall i in syn0Domain.dim(2) do syn0[0,i] = syn0[1,i];
-timer.stop();
-writeln("coforall loc on Locales[1..1] do on loc do forall i in syn0Domain.dim(2) do syn0[0,i] = syn0[1,i]: ", timer.elapsed(TimeUnits.microseconds));
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[1..1] do on loc do arr[0] = arr[1];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[1..1] do on loc do arr[0] = arr[1]");;
 
-/*const Space = {0..#1, 0..#n};
-const Foo = Space dmapped DimensionalDist2D(targetLocales, new ReplicatedDim(numLocales=1), new BlockDim(numLocales=1, boundingBox = 0..#n));*/
-/*const Foo = Space dmapped DimensionalDist2D(targetLocales, new ReplicatedDim(numLocales=1), new BlockCyclicDim(1, lowIdx=0, n));*/
-/*var replB: [Foo] elemType;*/
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do arr[0][dom] = arr[1][dom];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do arr[0][dom] = arr[1][dom]");;
 
-/*for loc in targetLocales do on loc {
-  forall a in replB do
-    a = here.id: elemType;
-  writeln("On ", here, ":");
-  const Helper: [Space] elemType = replB;
-  writeln(Helper);
-  writeln();
-}*/
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[1..1] do on loc do arr[0][dom] = arr[1][dom];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[1..1] do on loc do arr[0][dom] = arr[1][dom]");;
 
-/*info("here2");*/
-/*coforall dest in targetLocales[.., 0] do
-  on dest do
-    replB = syn0[1..1, ..];*/
+}
 
-/*replB = syn0[1..1,..];*/
-/*forall (a,b) in zip(replB, syn0[1..1,..]) do a += b;*/
-/*writeln(syn0);
-writeln();*/
-/*forall (a,b) in zip(replB, syn0[1..1,..]) do b = a;*/
-/*forall (a,b) in zip(syn0[0..0,..], syn0[1..1,..]) do a += b;*/
-/*syn0[0..0,..] += syn0[1..1,..];*/
-/*writeln(syn0);*/
-/*info(replB[0,0]);*/
+writeln("**");
+writeln("** local/remote class arr copy tests");
+writeln("**");
+
+{
+
+  const dom = {0..#(n*1024*1024)};
+  class RemoteMemory {;
+    var n: int;
+    var dom = {0..#n};
+    var arr: [dom] elemType;
+  };
+
+  var localMemory = new RemoteMemory(dom.high);
+  var remoteMemory: RemoteMemory;
+  on Locales[1] do remoteMemory = new RemoteMemory(dom.high);
+
+  timer.clear();
+  timer.start();
+  localMemory.arr = remoteMemory.arr;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tlocalMemory.arr = remoteMemory.arr");;
+
+  timer.clear();
+  timer.start();
+  localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tlocalMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do localMemory.arr = remoteMemory.arr;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do localMemory.arr = remoteMemory.arr");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[1..1] do on loc do localMemory.arr = remoteMemory.arr;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[1..1] do on loc do localMemory.arr = remoteMemory.arr");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[1..1] do on loc do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[1..1] do on loc do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]");;
+
+}
+
+writeln("**");
+writeln("** local/remote class 2D arr copy tests");
+writeln("**");
+
+{
+
+  const dom = {0..#k, 0..#(n*1024*1024)};
+  class RemoteMemory {;
+    var m: int;
+    var n: int;
+    var dom = {0..#m, 0..#n};
+    var arr: [dom] elemType;
+  };
+
+  var localMemory = new RemoteMemory(dom.dim(1).high, dom.dim(2).high);
+  var remoteMemory: RemoteMemory;
+  on Locales[1] do remoteMemory = new RemoteMemory(dom.dim(1).high, dom.dim(2).high);
+
+  timer.clear();
+  timer.start();
+  localMemory.arr = remoteMemory.arr;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tlocalMemory.arr = remoteMemory.arr");;
+
+  timer.clear();
+  timer.start();
+  localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tlocalMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do localMemory.arr = remoteMemory.arr;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do localMemory.arr = remoteMemory.arr");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[1..1] do on loc do localMemory.arr = remoteMemory.arr;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[1..1] do on loc do localMemory.arr = remoteMemory.arr");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[1..1] do on loc do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[1..1] do on loc do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]");;
+
+}
+
+writeln("**");
+writeln("** local memory assignment tests");
+writeln("**");
+
+{
+
+  const dom = {0..#(n*1024*1024)};
+  var arr: [dom] elemType;
+
+  timer.clear();
+  timer.start();
+  arr = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tarr = 0");;
+
+  timer.clear();
+  timer.start();
+  [i in arr.domain] arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\t[i in arr.domain] arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  for i in arr.domain do arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tfor i in arr.domain do arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  forall i in arr.domain do arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall i in arr.domain do arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  forall n in 0..#num_threads do arr = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do arr = 0");;
+
+  timer.clear();
+  timer.start();
+  forall n in 0..#num_threads do [i in arr.domain] arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do [i in arr.domain] arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  forall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  forall n in 0..#num_threads do for i in arr.domain do arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do for i in arr.domain do arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  forall n in 0..#num_threads do for l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do for l in arr do l = 0");;
+
+  timer.clear();
+  timer.start();
+  forall n in 0..#num_threads do forall l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do forall l in arr do l = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for l in arr do l = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall l in arr do l = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for i in arr.domain do arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for i in arr.domain do arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0");;
+
+}
+
+writeln("**");
+writeln("** local 2D memory assignment tests");
+writeln("**");
+
+{
+
+  const dom = {0..#k,0..#(n*1024*1024)};
+  var arr: [dom] elemType;
+
+  timer.clear();
+  timer.start();
+  arr = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tarr = 0");;
+
+  timer.clear();
+  timer.start();
+  [i in arr.domain] arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\t[i in arr.domain] arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  for i in arr.domain do arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tfor i in arr.domain do arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  forall i in arr.domain do arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall i in arr.domain do arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  forall n in 0..#num_threads do arr = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do arr = 0");;
+
+  timer.clear();
+  timer.start();
+  forall n in 0..#num_threads do [i in arr.domain] arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do [i in arr.domain] arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  forall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  forall n in 0..#num_threads do for i in arr.domain do arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do for i in arr.domain do arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  forall n in 0..#num_threads do for l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do for l in arr do l = 0");;
+
+  timer.clear();
+  timer.start();
+  forall n in 0..#num_threads do forall l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do forall l in arr do l = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for l in arr do l = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall l in arr do l = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for i in arr.domain do arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for i in arr.domain do arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  [(i,j) in arr.domain] arr[i,j] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\t[(i,j) in arr.domain] arr[i,j] = 0");;
+
+  timer.clear();
+  timer.start();
+  for (i,j) in arr.domain do arr[i,j] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tfor (i,j) in arr.domain do arr[i,j] = 0");;
+
+  timer.clear();
+  timer.start();
+  forall (i,j) in arr.domain do arr[i,j] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall (i,j) in arr.domain do arr[i,j] = 0");;
+
+  timer.clear();
+  timer.start();
+  forall n in 0..#num_threads do [(i,j) in arr.domain] arr[i,j] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do [(i,j) in arr.domain] arr[i,j] = 0");;
+
+  timer.clear();
+  timer.start();
+  forall n in 0..#num_threads do forall (i,j) in arr.domain do arr[i,j] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do forall (i,j) in arr.domain do arr[i,j] = 0");;
+
+  timer.clear();
+  timer.start();
+  forall n in 0..#num_threads do for (i,j) in arr.domain do arr[i,j] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do for (i,j) in arr.domain do arr[i,j] = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for (i,j) in arr.domain do arr[i,j] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for (i,j) in arr.domain do arr[i,j] = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall (i,j) in arr.domain do arr[i,j] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall (i,j) in arr.domain do arr[i,j] = 0");;
+
+}
+
+writeln("**");
+writeln("** Block dmapped memory copy tests");
+writeln("**");
+
+{
+
+  var dom = {0..#numLocales, 0..1024};
+  const domBlockSpace = dom dmapped Block(boundingBox=dom);
+  var arr: [domBlockSpace] elemType;
+
+  timer.clear();
+  timer.start();
+  arr[0,..] = arr[1,..];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tarr[0,..] = arr[1,..]");;
+
+  timer.clear();
+  timer.start();
+  arr[0,dom.dim(2)] = arr[1,dom.dim(2)];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tarr[0,dom.dim(2)] = arr[1,dom.dim(2)]");;
+
+  timer.clear();
+  timer.start();
+  [i in dom.dim(2)] arr[0,i] = arr[1,i];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\t[i in dom.dim(2)] arr[0,i] = arr[1,i]");;
+
+  timer.clear();
+  timer.start();
+  forall i in dom.dim(2) do arr[0,i] = arr[1,i];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall i in dom.dim(2) do arr[0,i] = arr[1,i]");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall i in dom.dim(2) do arr[0,i] = arr[1,i];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall i in dom.dim(2) do arr[0,i] = arr[1,i]");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[1..1] do on loc do forall i in dom.dim(2) do arr[0,i] = arr[1,i];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[1..1] do on loc do forall i in dom.dim(2) do arr[0,i] = arr[1,i]");;
+
+}
+
+writeln("**");
+writeln("** DimensionalDist2D dmapped tests");
+writeln("**");
+
+{
+
+  var targetLocales: [0..#1, 0..#1] locale = Locales[0];
+  targetLocales[1,0] = Locales[1];
+  const FooSpace = {0..#1, 0..#n};
+  const Foo = FooSpace dmapped DimensionalDist2D(targetLocales, new ReplicatedDim(numLocales=1), new BlockDim(numLocales=1, boundingBox = 0..#n));
+  var replB: [Foo] elemType;
+}
