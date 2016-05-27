@@ -50,6 +50,13 @@ def stopClass():
     x("}")
     x("")
 
+def allthreads(cmd):
+    return "forall n in 0..#num_threads do {}".format(cmd)
+
+def coforall(cmd, locale = 0):
+    return "coforall loc in Locales[{}..{}] do on loc do {}".format(locale, locale, cmd)
+
+
 x("use BlockDist")
 x("use Logging")
 x("use PrivateDist")
@@ -65,13 +72,16 @@ x("")
 x("var timer: Timer")
 
 def privateDistCommonCopyTests():
-    c("arr[0] = arr[1]");
-    c("arr[0][dom] = arr[1][dom]");
     # c("[i in dom] arr[0][i] = arr[1][i]");
-    c("coforall loc in Locales[0..0] do on loc do arr[0] = arr[1]")
-    c("coforall loc in Locales[1..1] do on loc do arr[0] = arr[1]")
-    c("coforall loc in Locales[0..0] do on loc do arr[0][dom] = arr[1][dom]")
-    c("coforall loc in Locales[1..1] do on loc do arr[0][dom] = arr[1][dom]")
+    tests = [
+        "arr[0] = arr[1]",
+        "arr[0][dom] = arr[1][dom]"
+    ]
+    for cmd in tests:
+        c(cmd)
+    for cmd in tests:
+        c(coforall(cmd))
+        c(coforall(cmd, 1))
 
 startSection("PrivateSpace copy tests")
 x("const dom = {0..#(n*1024*1024)}")
@@ -88,19 +98,27 @@ privateDistCommonCopyTests()
 stopSection()
 
 def localRemoteCommonCopyTests():
-    c("localMemory.arr = remoteMemory.arr")
-    c("localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]")
     # c("for (a,b) in zip(localMemory.arr, remoteMemory.arr) do a = b")
     # too slow to use
     # c("[i in localMemory.dom] localMemory.arr[i] = remoteMemory.arr[i]")
     # c("coforall loc in Locales[0..0] do on loc do [i in localMemory.dom] localMemory.arr[i] = remoteMemory.arr[i]")
     # c("coforall loc in Locales[1..1] do on loc do [i in localMemory.dom] localMemory.arr[i] = remoteMemory.arr[i]")
-    c("coforall loc in Locales[0..0] do on loc do localMemory.arr = remoteMemory.arr")
-    c("coforall loc in Locales[1..1] do on loc do localMemory.arr = remoteMemory.arr")
-    c("coforall loc in Locales[0..0] do on loc do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]")
-    c("coforall loc in Locales[1..1] do on loc do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]")
     # c("coforall loc in Locales[0..0] do on loc do for (a,b) in zip(localMemory.arr, remoteMemory.arr) do a = b")
     # c("coforall loc in Locales[1..1] do on loc do for (a,b) in zip(localMemory.arr, remoteMemory.arr) do a = b")
+    tests = [
+        "localMemory.arr = remoteMemory.arr",
+        "localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]"
+    ]
+    for cmd in tests:
+        c(cmd)
+    for cmd in tests:
+        c(allthreads(cmd))
+    for cmd in tests:
+        c(coforall(cmd))
+        c(coforall(cmd,1))
+    for cmd in tests:
+        c(coforall(allthreads(cmd)))
+        c(coforall(allthreads(cmd),1),)
 
 startSection("local/remote class arr copy tests")
 x("const dom = {0..#(n*1024*1024)}")
@@ -135,22 +153,24 @@ stopSection()
 
 def assignmentCommonTests():
     # simple tests
-    c("arr = 0")
-    c("[i in arr.domain] arr[i] = 0")
-    c("for i in arr.domain do arr[i] = 0")
-    c("forall i in arr.domain do arr[i] = 0")
+    tests = [
+        "arr = 0",
+        "[i in arr.domain] arr[i] = 0",
+        "for i in arr.domain do arr[i] = 0",
+        "forall i in arr.domain do arr[i] = 0",
+        "for l in arr do l = 0",
+        "forall l in arr do l = 0"
+    ]
+    for cmd in tests:
+        c(cmd)
     # simulate running a simulation on each thread
-    c("forall n in 0..#num_threads do arr = 0")
-    c("forall n in 0..#num_threads do [i in arr.domain] arr[i] = 0")
-    c("forall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0")
-    c("forall n in 0..#num_threads do for i in arr.domain do arr[i] = 0")
-    c("forall n in 0..#num_threads do for l in arr do l = 0")
-    c("forall n in 0..#num_threads do forall l in arr do l = 0")
+    for cmd in tests:
+        c(allthreads(cmd))
+    for cmd in tests:
+        c(coforall(cmd))
     # simulate multi-locale and each locale running a simulation on each thread
-    c("coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for l in arr do l = 0")
-    c("coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall l in arr do l = 0")
-    c("coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for i in arr.domain do arr[i] = 0")
-    c("coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0")
+    for cmd in tests:
+        c(coforall(allthreads(cmd)))
 
 startSection("local memory assignment tests")
 x("const dom = {0..#(n*1024*1024)}")
@@ -159,19 +179,35 @@ x("")
 assignmentCommonTests()
 stopSection()
 
+def assignment2DTests():
+    tests = [
+        "[(i,j) in arr.domain] arr[i,j] = 0",
+        "for (i,j) in arr.domain do arr[i,j] = 0",
+        "forall (i,j) in arr.domain do arr[i,j] = 0"
+    ]
+    for cmd in tests:
+        c(cmd)
+    for cmd in tests:
+        c(allthreads(cmd))
+    for cmd in tests:
+        c(coforall(cmd))
+    for cmd in tests:
+        c(coforall(allthreads(cmd)))
+
 startSection("local 2D memory assignment tests")
 x("const dom = {0..#k,0..#(n*1024*1024)}")
 x("var arr: [dom] elemType")
 x("")
 assignmentCommonTests()
-c("[(i,j) in arr.domain] arr[i,j] = 0")
-c("for (i,j) in arr.domain do arr[i,j] = 0")
-c("forall (i,j) in arr.domain do arr[i,j] = 0")
-c("forall n in 0..#num_threads do [(i,j) in arr.domain] arr[i,j] = 0")
-c("forall n in 0..#num_threads do forall (i,j) in arr.domain do arr[i,j] = 0")
-c("forall n in 0..#num_threads do for (i,j) in arr.domain do arr[i,j] = 0")
-c("coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for (i,j) in arr.domain do arr[i,j] = 0")
-c("coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall (i,j) in arr.domain do arr[i,j] = 0")
+assignment2DTests()
+# c("[(i,j) in arr.domain] arr[i,j] = 0")
+# c("for (i,j) in arr.domain do arr[i,j] = 0")
+# c("forall (i,j) in arr.domain do arr[i,j] = 0")
+# c("forall n in 0..#num_threads do [(i,j) in arr.domain] arr[i,j] = 0")
+# c("forall n in 0..#num_threads do forall (i,j) in arr.domain do arr[i,j] = 0")
+# c("forall n in 0..#num_threads do for (i,j) in arr.domain do arr[i,j] = 0")
+# c("coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for (i,j) in arr.domain do arr[i,j] = 0")
+# c("coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall (i,j) in arr.domain do arr[i,j] = 0")
 stopSection()
 
 startSection("Block dmapped memory copy tests")

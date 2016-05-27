@@ -137,6 +137,18 @@ writeln("**");
 
   timer.clear();
   timer.start();
+  forall n in 0..#num_threads do localMemory.arr = remoteMemory.arr;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do localMemory.arr = remoteMemory.arr");;
+
+  timer.clear();
+  timer.start();
+  forall n in 0..#num_threads do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]");;
+
+  timer.clear();
+  timer.start();
   coforall loc in Locales[0..0] do on loc do localMemory.arr = remoteMemory.arr;
   timer.stop();
   info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do localMemory.arr = remoteMemory.arr");;
@@ -158,6 +170,30 @@ writeln("**");
   coforall loc in Locales[1..1] do on loc do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom];
   timer.stop();
   info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[1..1] do on loc do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do localMemory.arr = remoteMemory.arr;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do localMemory.arr = remoteMemory.arr");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[1..1] do on loc do forall n in 0..#num_threads do localMemory.arr = remoteMemory.arr;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[1..1] do on loc do forall n in 0..#num_threads do localMemory.arr = remoteMemory.arr");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[1..1] do on loc do forall n in 0..#num_threads do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[1..1] do on loc do forall n in 0..#num_threads do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]");;
 
 }
 
@@ -193,6 +229,18 @@ writeln("**");
 
   timer.clear();
   timer.start();
+  forall n in 0..#num_threads do localMemory.arr = remoteMemory.arr;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do localMemory.arr = remoteMemory.arr");;
+
+  timer.clear();
+  timer.start();
+  forall n in 0..#num_threads do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]");;
+
+  timer.clear();
+  timer.start();
   coforall loc in Locales[0..0] do on loc do localMemory.arr = remoteMemory.arr;
   timer.stop();
   info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do localMemory.arr = remoteMemory.arr");;
@@ -214,6 +262,30 @@ writeln("**");
   coforall loc in Locales[1..1] do on loc do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom];
   timer.stop();
   info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[1..1] do on loc do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do localMemory.arr = remoteMemory.arr;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do localMemory.arr = remoteMemory.arr");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[1..1] do on loc do forall n in 0..#num_threads do localMemory.arr = remoteMemory.arr;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[1..1] do on loc do forall n in 0..#num_threads do localMemory.arr = remoteMemory.arr");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[1..1] do on loc do forall n in 0..#num_threads do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom];
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[1..1] do on loc do forall n in 0..#num_threads do localMemory.arr[localMemory.dom] = remoteMemory.arr[localMemory.dom]");;
 
 }
 
@@ -252,6 +324,18 @@ writeln("**");
 
   timer.clear();
   timer.start();
+  for l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tfor l in arr do l = 0");;
+
+  timer.clear();
+  timer.start();
+  forall l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall l in arr do l = 0");;
+
+  timer.clear();
+  timer.start();
   forall n in 0..#num_threads do arr = 0;
   timer.stop();
   info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do arr = 0");;
@@ -264,15 +348,15 @@ writeln("**");
 
   timer.clear();
   timer.start();
-  forall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0;
-  timer.stop();
-  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0");;
-
-  timer.clear();
-  timer.start();
   forall n in 0..#num_threads do for i in arr.domain do arr[i] = 0;
   timer.stop();
   info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do for i in arr.domain do arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  forall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0");;
 
   timer.clear();
   timer.start();
@@ -288,15 +372,51 @@ writeln("**");
 
   timer.clear();
   timer.start();
-  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for l in arr do l = 0;
+  coforall loc in Locales[0..0] do on loc do arr = 0;
   timer.stop();
-  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for l in arr do l = 0");;
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do arr = 0");;
 
   timer.clear();
   timer.start();
-  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall l in arr do l = 0;
+  coforall loc in Locales[0..0] do on loc do [i in arr.domain] arr[i] = 0;
   timer.stop();
-  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall l in arr do l = 0");;
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do [i in arr.domain] arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do for i in arr.domain do arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do for i in arr.domain do arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall i in arr.domain do arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall i in arr.domain do arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do for l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do for l in arr do l = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall l in arr do l = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do arr = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do arr = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do [i in arr.domain] arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do [i in arr.domain] arr[i] = 0");;
 
   timer.clear();
   timer.start();
@@ -309,6 +429,18 @@ writeln("**");
   coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0;
   timer.stop();
   info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for l in arr do l = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall l in arr do l = 0");;
 
 }
 
@@ -347,6 +479,18 @@ writeln("**");
 
   timer.clear();
   timer.start();
+  for l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tfor l in arr do l = 0");;
+
+  timer.clear();
+  timer.start();
+  forall l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall l in arr do l = 0");;
+
+  timer.clear();
+  timer.start();
   forall n in 0..#num_threads do arr = 0;
   timer.stop();
   info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do arr = 0");;
@@ -359,15 +503,15 @@ writeln("**");
 
   timer.clear();
   timer.start();
-  forall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0;
-  timer.stop();
-  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0");;
-
-  timer.clear();
-  timer.start();
   forall n in 0..#num_threads do for i in arr.domain do arr[i] = 0;
   timer.stop();
   info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do for i in arr.domain do arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  forall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0");;
 
   timer.clear();
   timer.start();
@@ -383,15 +527,51 @@ writeln("**");
 
   timer.clear();
   timer.start();
-  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for l in arr do l = 0;
+  coforall loc in Locales[0..0] do on loc do arr = 0;
   timer.stop();
-  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for l in arr do l = 0");;
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do arr = 0");;
 
   timer.clear();
   timer.start();
-  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall l in arr do l = 0;
+  coforall loc in Locales[0..0] do on loc do [i in arr.domain] arr[i] = 0;
   timer.stop();
-  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall l in arr do l = 0");;
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do [i in arr.domain] arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do for i in arr.domain do arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do for i in arr.domain do arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall i in arr.domain do arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall i in arr.domain do arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do for l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do for l in arr do l = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall l in arr do l = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do arr = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do arr = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do [i in arr.domain] arr[i] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do [i in arr.domain] arr[i] = 0");;
 
   timer.clear();
   timer.start();
@@ -404,6 +584,18 @@ writeln("**");
   coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0;
   timer.stop();
   info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall i in arr.domain do arr[i] = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do for l in arr do l = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall l in arr do l = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do forall l in arr do l = 0");;
 
   timer.clear();
   timer.start();
@@ -431,15 +623,39 @@ writeln("**");
 
   timer.clear();
   timer.start();
+  forall n in 0..#num_threads do for (i,j) in arr.domain do arr[i,j] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do for (i,j) in arr.domain do arr[i,j] = 0");;
+
+  timer.clear();
+  timer.start();
   forall n in 0..#num_threads do forall (i,j) in arr.domain do arr[i,j] = 0;
   timer.stop();
   info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do forall (i,j) in arr.domain do arr[i,j] = 0");;
 
   timer.clear();
   timer.start();
-  forall n in 0..#num_threads do for (i,j) in arr.domain do arr[i,j] = 0;
+  coforall loc in Locales[0..0] do on loc do [(i,j) in arr.domain] arr[i,j] = 0;
   timer.stop();
-  info(timer.elapsed(TimeUnits.microseconds), ":\tforall n in 0..#num_threads do for (i,j) in arr.domain do arr[i,j] = 0");;
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do [(i,j) in arr.domain] arr[i,j] = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do for (i,j) in arr.domain do arr[i,j] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do for (i,j) in arr.domain do arr[i,j] = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall (i,j) in arr.domain do arr[i,j] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall (i,j) in arr.domain do arr[i,j] = 0");;
+
+  timer.clear();
+  timer.start();
+  coforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do [(i,j) in arr.domain] arr[i,j] = 0;
+  timer.stop();
+  info(timer.elapsed(TimeUnits.microseconds), ":\tcoforall loc in Locales[0..0] do on loc do forall n in 0..#num_threads do [(i,j) in arr.domain] arr[i,j] = 0");;
 
   timer.clear();
   timer.start();
