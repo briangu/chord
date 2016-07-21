@@ -1,6 +1,6 @@
 # Chord
 
-Chord is a distributed implementation of Google's word2vec using Chapel.  The project contains
+Chord is a distributed (using Downpour) implementation of Google's word2vec using Chapel.  The project contains
 both a 'lexical' port of the original word2vec code (word2vec_classic.chpl) and
 a distributed variant which takes advantage of Chapel's locality features (word2vec_dsgd.chpl).
 
